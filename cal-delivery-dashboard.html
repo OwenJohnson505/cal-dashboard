@@ -745,6 +745,9 @@ function applyFilter() {
     repAliasMap[a.alias_name] = a.canonical_name;
   });
 
+  // Build set of customers assigned to any team (for CS catch-all)
+  const assignedCustomers = new Set();
+
   cbFiltered.forEach(c => {
     const resolvedName = aliasMap[c.customer_name] || c.customer_name;
     let assignedTeam = null;
@@ -785,8 +788,29 @@ function applyFilter() {
       team.total_revenue += Number(c.revenue);
       team.total_cost += Number(c.cost);
       team.total_profit += Number(c.profit);
+      assignedCustomers.add(c.customer_name);
     }
   });
+
+  // Auto-assign unassigned accounts to Customer Service teams per depot
+  const csNorth = { id: '_cs_north', name: 'Customer Service North', depot: 'north', capacity_jobs_per_week: null, customers: new Set(), total_jobs: 0, total_revenue: 0, total_cost: 0, total_profit: 0 };
+  const csSouth = { id: '_cs_south', name: 'Customer Service South', depot: 'south', capacity_jobs_per_week: null, customers: new Set(), total_jobs: 0, total_revenue: 0, total_cost: 0, total_profit: 0 };
+
+  cbFiltered.forEach(c => {
+    if (assignedCustomers.has(c.customer_name)) return; // already assigned to a team
+    const resolvedName = aliasMap[c.customer_name] || c.customer_name;
+    const depot = (c.depot || '').toLowerCase();
+    const csTeam = depot === 'south' ? csSouth : csNorth; // default to north if unknown
+    csTeam.customers.add(resolvedName);
+    csTeam.total_jobs += Number(c.jobs);
+    csTeam.total_revenue += Number(c.revenue);
+    csTeam.total_cost += Number(c.cost);
+    csTeam.total_profit += Number(c.profit);
+  });
+
+  // Add CS teams to teamMap (only if they have customers)
+  if (csNorth.customers.size > 0) teamMap['_cs_north'] = csNorth;
+  if (csSouth.customers.size > 0) teamMap['_cs_south'] = csSouth;
 
   DATA.teams = Object.values(teamMap).map(t => ({
     ...t,
@@ -1687,7 +1711,7 @@ function renderTeams(el) {
     <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
       ${t.map(team => `
         <div class="kpi">
-          <div class="label">${team.name}</div>
+          <div class="label">${team.name}${String(team.id).startsWith('_cs_') ? ' <span style="font-size:9px;background:#475569;color:#94a3b8;padding:2px 6px;border-radius:4px;margin-left:4px;font-weight:400">AUTO</span>' : ''}</div>
           <div style="font-size:14px;color:#94a3b8;margin:8px 0">
             <div>Jobs: ${fNum(team.total_jobs)}</div>
             <div>Revenue: ${fGBP(team.total_revenue)}</div>

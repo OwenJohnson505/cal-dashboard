@@ -2787,7 +2787,10 @@ function renderInsights(el) {
           <div style="font-size:12px;color:#94a3b8;margin-bottom:6px;font-weight:500">Time type</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
-              <input type="checkbox" class="hm-time-chk" value="ready_at" checked style="accent-color:#3b82f6"> Ready at
+              <input type="checkbox" class="hm-time-chk" value="booked_at" checked style="accent-color:#a855f7"> Booked
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="hm-time-chk" value="ready_at" style="accent-color:#3b82f6"> Ready at
             </label>
             <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
               <input type="checkbox" class="hm-time-chk" value="pob_time" style="accent-color:#22c55e"> Collected (POB)
@@ -3193,7 +3196,7 @@ function renderInsights(el) {
     // Summary text
     const summaryEl = document.getElementById('hm-summary');
     const teamLabel = isAllTeams ? 'all teams' : (selectedTeamIds.size === 0 ? 'no teams selected' : selectedTeamIds.size + ' team(s)');
-    const timeLabel = selectedTimes.map(t => t === 'ready_at' ? 'Ready at' : t === 'pob_time' ? 'Collected' : 'Delivered').join(' + ');
+    const timeLabel = selectedTimes.map(t => t === 'booked_at' ? 'Booked' : t === 'ready_at' ? 'Ready at' : t === 'pob_time' ? 'Collected' : 'Delivered').join(' + ');
     const totalMissing = missingNull + missingMidnight + missingInvalid;
     let missingDetail = '';
     if (totalMissing > 0) {

@@ -6663,7 +6663,7 @@ let _isLoadingData = false;
 async function fetchRangeData(fromWeek, toWeek) {
   console.log('📊 Fetching range data:', fromWeek, '→', toWeek);
   const wkFilter = '&week_label=gte.' + fromWeek + '&week_label=lte.' + toWeek;
-  const baseJobCols = 'week_label,job_no,customer_name,sales_name,depot,revenue,cost,profit,vehicle,collection_postcode,delivery_postcode';
+  const baseJobCols = 'week_label,job_no,customer_name,sales_name,depot,revenue,cost,profit,vehicle,collection_postcode,delivery_postcode,ready_at,booked_at,delivery_deadline,pob_time,pod_time';
   const extraJobCols = baseJobCols + ',supplier,call_sign';
 
   const [rawCustomers, rawRegions, rawVehicles] = await Promise.all([

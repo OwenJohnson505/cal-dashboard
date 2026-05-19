@@ -3077,6 +3077,8 @@ function renderInsights(el) {
         if (!raw) { jobsMissingTime++; return; }
         const dt = new Date(raw);
         if (isNaN(dt.getTime())) { jobsMissingTime++; return; }
+        // Skip midnight timestamps — these are date-only values with no real time
+        if (dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) { jobsMissingTime++; return; }
         const hour = dt.getUTCHours();
         let dow = dt.getUTCDay(); // 0=Sun
         dow = dow === 0 ? 6 : dow - 1; // shift to 0=Mon

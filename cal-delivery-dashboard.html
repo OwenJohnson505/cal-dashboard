@@ -2822,6 +2822,9 @@ function renderInsights(el) {
       </div>
       <div id="hm-summary" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
       <div id="hm-grid" style="overflow-x:auto"></div>
+      <div style="margin-top:14px;text-align:right">
+        <button onclick="openWorkloadOptimizer()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;color:#fff;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Workload Optimizer</button>
+      </div>
     </div>
 
     <div class="range-info">Rate Review \u2014 ${numWeeks} week(s) selected</div>
@@ -6951,6 +6954,546 @@ async function loadRangeData(fromWeek, toWeek) {
     _isLoadingData = false;
   }
 }
+
+// ════════════════════════════════════════════════════════
+// WORKLOAD OPTIMIZER
+// ════════════════════════════════════════════════════════
+
+function openWorkloadOptimizer() {
+  let overlay = document.getElementById('wlo-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'wlo-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#0f172a;z-index:9999;overflow-y:auto;display:none';
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+  renderOptimizerSetup(overlay);
+}
+
+function closeWorkloadOptimizer() {
+  const overlay = document.getElementById('wlo-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function renderOptimizerSetup(overlay) {
+  // Collect all team members from DATA.teams
+  const allTeams = DATA.teams || [];
+  const members = [];
+  allTeams.forEach(t => {
+    members.push({ id: t.id, name: t.name, customerCount: (t.customers || []).length });
+  });
+
+  overlay.innerHTML = `
+    <div style="max-width:1200px;margin:0 auto;padding:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+        <h2 style="margin:0;font-size:20px;color:#e2e8f0">Workload Optimizer</h2>
+        <button onclick="closeWorkloadOptimizer()" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px">Close</button>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px;font-size:15px">1. Select team members to balance</h3>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:12px">Pick the people whose workload you want to compare and optimise. You can then group them into pairs.</p>
+        <div id="wlo-members" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+          ${members.map(m => `<label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;border:1px solid #334155">
+            <input type="checkbox" class="wlo-member-chk" value="${m.id}" data-name="${m.name}" style="accent-color:#8b5cf6"> ${m.name} <span style="color:#64748b;font-size:11px">(${m.customerCount})</span>
+          </label>`).join('')}
+        </div>
+
+        <h3 style="margin-bottom:12px;font-size:15px">2. Group into teams <span style="color:#64748b;font-size:12px;font-weight:400">(optional — for team-vs-team comparison)</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:12px">Assign selected members to Group A or B. Members not assigned to a group are balanced individually.</p>
+        <div id="wlo-groups" style="display:flex;gap:16px;margin-bottom:16px">
+          <div style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;min-height:60px">
+            <div style="font-size:12px;color:#a78bfa;font-weight:600;margin-bottom:8px">GROUP A</div>
+            <div id="wlo-group-a" style="display:flex;gap:6px;flex-wrap:wrap;min-height:30px"></div>
+          </div>
+          <div style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;min-height:60px">
+            <div style="font-size:12px;color:#22d3ee;font-weight:600;margin-bottom:8px">GROUP B</div>
+            <div id="wlo-group-b" style="display:flex;gap:6px;flex-wrap:wrap;min-height:30px"></div>
+          </div>
+        </div>
+
+        <h3 style="margin-bottom:12px;font-size:15px">3. Time type</h3>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;border:1px solid #334155">
+            <input type="radio" name="wlo-time" value="booked_at" checked style="accent-color:#a855f7"> Booked
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;border:1px solid #334155">
+            <input type="radio" name="wlo-time" value="pob_time" style="accent-color:#22c55e"> Collected (POB)
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;border:1px solid #334155">
+            <input type="radio" name="wlo-time" value="pod_time" style="accent-color:#f59e0b"> Delivered (POD)
+          </label>
+        </div>
+
+        <h3 style="margin-bottom:12px;font-size:15px">4. Tuning</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px">
+          <div>
+            <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:4px">Max swaps: <span id="wlo-maxswaps-val">5</span></label>
+            <input type="range" id="wlo-maxswaps" min="1" max="15" value="5" step="1" style="width:100%;accent-color:#8b5cf6">
+          </div>
+          <div>
+            <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:4px">Min jobs per customer: <span id="wlo-minjobs-val">10</span></label>
+            <input type="range" id="wlo-minjobs" min="1" max="100" value="10" step="1" style="width:100%;accent-color:#8b5cf6">
+          </div>
+          <div>
+            <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:4px">Focus hours: <span id="wlo-hours-val">06:00 – 20:00</span></label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="range" id="wlo-hour-start" min="0" max="23" value="6" step="1" style="flex:1;accent-color:#8b5cf6">
+              <input type="range" id="wlo-hour-end" min="0" max="23" value="20" step="1" style="flex:1;accent-color:#8b5cf6">
+            </div>
+          </div>
+        </div>
+
+        <button id="wlo-run-btn" onclick="runWorkloadAnalysis()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;color:#fff;padding:10px 28px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500">Analyse & Optimise</button>
+      </div>
+
+      <div id="wlo-results"></div>
+    </div>
+  `;
+
+  // Wire slider readouts
+  document.getElementById('wlo-maxswaps').oninput = function() { document.getElementById('wlo-maxswaps-val').textContent = this.value; };
+  document.getElementById('wlo-minjobs').oninput = function() { document.getElementById('wlo-minjobs-val').textContent = this.value; };
+  const updateHoursLabel = () => {
+    const s = document.getElementById('wlo-hour-start').value;
+    const e = document.getElementById('wlo-hour-end').value;
+    document.getElementById('wlo-hours-val').textContent = String(s).padStart(2,'0') + ':00 – ' + String(e).padStart(2,'0') + ':00';
+  };
+  document.getElementById('wlo-hour-start').oninput = updateHoursLabel;
+  document.getElementById('wlo-hour-end').oninput = updateHoursLabel;
+
+  // Wire member selection → group assignment buttons
+  document.querySelectorAll('.wlo-member-chk').forEach(chk => {
+    chk.onchange = () => wloUpdateGroupPickers();
+  });
+}
+
+function wloUpdateGroupPickers() {
+  const selected = [...document.querySelectorAll('.wlo-member-chk:checked')];
+  const grpA = document.getElementById('wlo-group-a');
+  const grpB = document.getElementById('wlo-group-b');
+  if (!grpA || !grpB) return;
+
+  // Remember existing assignments
+  const prevA = new Set([...grpA.querySelectorAll('[data-mid]')].map(e => e.dataset.mid));
+  const prevB = new Set([...grpB.querySelectorAll('[data-mid]')].map(e => e.dataset.mid));
+
+  const makeTag = (id, name, group) => {
+    const colors = group === 'a' ? {bg:'#2e1065',border:'#7c3aed',text:'#c4b5fd'} : {bg:'#083344',border:'#06b6d4',text:'#67e8f9'};
+    const otherGroup = group === 'a' ? 'b' : 'a';
+    return `<span data-mid="${id}" style="display:inline-flex;align-items:center;gap:4px;background:${colors.bg};border:1px solid ${colors.border};color:${colors.text};padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer" onclick="wloMoveToGroup('${id}','${name}','${otherGroup}')" title="Click to move to Group ${otherGroup.toUpperCase()}">${name} ×</span>`;
+  };
+
+  // Remove tags for unchecked members
+  [...grpA.querySelectorAll('[data-mid]')].forEach(el => {
+    if (!selected.find(c => c.value === el.dataset.mid)) el.remove();
+  });
+  [...grpB.querySelectorAll('[data-mid]')].forEach(el => {
+    if (!selected.find(c => c.value === el.dataset.mid)) el.remove();
+  });
+
+  // Add new selected members that aren't assigned yet
+  selected.forEach(chk => {
+    const id = chk.value;
+    const name = chk.dataset.name;
+    const inA = grpA.querySelector(`[data-mid="${id}"]`);
+    const inB = grpB.querySelector(`[data-mid="${id}"]`);
+    if (!inA && !inB) {
+      // Auto-assign: alternate between groups
+      const aCount = grpA.querySelectorAll('[data-mid]').length;
+      const bCount = grpB.querySelectorAll('[data-mid]').length;
+      const target = aCount <= bCount ? grpA : grpB;
+      const grp = target === grpA ? 'a' : 'b';
+      target.insertAdjacentHTML('beforeend', makeTag(id, name, grp));
+    }
+  });
+}
+
+function wloMoveToGroup(id, name, targetGroup) {
+  const grpA = document.getElementById('wlo-group-a');
+  const grpB = document.getElementById('wlo-group-b');
+  // Remove from both
+  [...grpA.querySelectorAll(`[data-mid="${id}"]`), ...grpB.querySelectorAll(`[data-mid="${id}"]`)].forEach(e => e.remove());
+  // Add to target
+  const target = targetGroup === 'a' ? grpA : grpB;
+  const colors = targetGroup === 'a' ? {bg:'#2e1065',border:'#7c3aed',text:'#c4b5fd'} : {bg:'#083344',border:'#06b6d4',text:'#67e8f9'};
+  const otherGroup = targetGroup === 'a' ? 'b' : 'a';
+  target.insertAdjacentHTML('beforeend', `<span data-mid="${id}" style="display:inline-flex;align-items:center;gap:4px;background:${colors.bg};border:1px solid ${colors.border};color:${colors.text};padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer" onclick="wloMoveToGroup('${id}','${name}','${otherGroup}')" title="Click to move to Group ${otherGroup.toUpperCase()}">${name} ×</span>`);
+}
+
+function runWorkloadAnalysis() {
+  const btn = document.getElementById('wlo-run-btn');
+  btn.textContent = 'Analysing...';
+  btn.disabled = true;
+  setTimeout(() => {
+    try { _runWorkloadAnalysis(); }
+    catch(e) { document.getElementById('wlo-results').innerHTML = '<div class="card" style="color:#f87171">Error: ' + e.message + '</div>'; }
+    btn.textContent = 'Analyse & Optimise';
+    btn.disabled = false;
+  }, 50);
+}
+
+function _runWorkloadAnalysis() {
+  const timeField = document.querySelector('input[name="wlo-time"]:checked').value;
+  const maxSwaps = parseInt(document.getElementById('wlo-maxswaps').value);
+  const minJobs = parseInt(document.getElementById('wlo-minjobs').value);
+  const hourStart = parseInt(document.getElementById('wlo-hour-start').value);
+  const hourEnd = parseInt(document.getElementById('wlo-hour-end').value);
+
+  // Get selected members with group assignments
+  const selectedChks = [...document.querySelectorAll('.wlo-member-chk:checked')];
+  if (selectedChks.length < 2) {
+    document.getElementById('wlo-results').innerHTML = '<div class="card" style="color:#f59e0b">Select at least 2 team members to compare.</div>';
+    return;
+  }
+
+  const grpATags = [...document.querySelectorAll('#wlo-group-a [data-mid]')].map(e => e.dataset.mid);
+  const grpBTags = [...document.querySelectorAll('#wlo-group-b [data-mid]')].map(e => e.dataset.mid);
+
+  const participants = selectedChks.map(chk => {
+    const tid = chk.value;
+    const team = (DATA.teams || []).find(t => String(t.id) === String(tid));
+    const group = grpATags.includes(tid) ? 'A' : grpBTags.includes(tid) ? 'B' : null;
+    return { id: tid, name: chk.dataset.name, customers: team ? [...team.customers] : [], group };
+  });
+
+  // Build alias map for customer matching
+  const aliasMap = {};
+  (DATA.teams || []).forEach(t => {
+    (t.customers || []).forEach(cn => { aliasMap[cn] = cn; });
+  });
+
+  // Get all loaded jobs
+  const allJobs = (window._wloJobs || []);
+  // We need to access the jobs that are loaded in the dashboard
+  // They're stored in a closure, so let's access via the global rawJobs or reload
+  let jobs = [];
+  if (typeof ALL_DATA !== 'undefined' && ALL_DATA.rawJobs) {
+    jobs = ALL_DATA.rawJobs;
+  }
+  if (jobs.length === 0) {
+    document.getElementById('wlo-results').innerHTML = '<div class="card" style="color:#f59e0b">No job data loaded. Please wait for the dashboard to finish loading.</div>';
+    return;
+  }
+
+  // Build customer → participant mapping
+  const custToParticipant = {};
+  participants.forEach(p => {
+    (p.customers || []).forEach(cn => { custToParticipant[cn] = p.id; });
+  });
+
+  // Build per-customer hourly distribution (only for participants' customers)
+  const custHourly = {}; // custName → {hours: [24], total: N}
+  jobs.forEach(j => {
+    const raw = j[timeField];
+    if (!raw) return;
+    const dt = new Date(raw);
+    if (isNaN(dt.getTime())) return;
+    const h = dt.getUTCHours();
+    if (h === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) return;
+
+    const cn = j.customer_name;
+    // Check if this customer belongs to any participant
+    const owner = custToParticipant[cn];
+    if (!owner) return;
+
+    if (!custHourly[cn]) custHourly[cn] = { hours: Array(24).fill(0), total: 0, owner };
+    custHourly[cn].hours[h]++;
+    custHourly[cn].total++;
+  });
+
+  // Build per-participant hourly totals
+  function buildParticipantHourly(custMap) {
+    const result = {};
+    participants.forEach(p => { result[p.id] = Array(24).fill(0); });
+    Object.entries(custMap).forEach(([cn, data]) => {
+      const owner = data.owner;
+      if (result[owner]) {
+        for (let h = 0; h < 24; h++) result[owner][h] += data.hours[h];
+      }
+    });
+    return result;
+  }
+
+  const currentHourly = buildParticipantHourly(custHourly);
+
+  // Score function: sum of peak hours within focus window across all participants
+  // Lower is better (more balanced)
+  function scoreBalance(hourlyMap) {
+    let totalPeakVariance = 0;
+    const focusLoads = {};
+    participants.forEach(p => {
+      let total = 0;
+      let peak = 0;
+      for (let h = hourStart; h <= Math.min(hourEnd, 23); h++) {
+        const v = hourlyMap[p.id][h] || 0;
+        total += v;
+        if (v > peak) peak = v;
+      }
+      focusLoads[p.id] = { total, peak };
+    });
+
+    // If groups exist, score by group balance
+    const hasGroups = participants.some(p => p.group);
+    if (hasGroups) {
+      const groupTotals = { A: { total: 0, peak: 0, hours: Array(24).fill(0) }, B: { total: 0, peak: 0, hours: Array(24).fill(0) } };
+      participants.forEach(p => {
+        if (p.group && groupTotals[p.group]) {
+          groupTotals[p.group].total += focusLoads[p.id].total;
+          for (let h = 0; h < 24; h++) groupTotals[p.group].hours[h] += (hourlyMap[p.id][h] || 0);
+        }
+      });
+      // Peak per group
+      ['A','B'].forEach(g => {
+        let pk = 0;
+        for (let h = hourStart; h <= Math.min(hourEnd, 23); h++) {
+          if (groupTotals[g].hours[h] > pk) pk = groupTotals[g].hours[h];
+        }
+        groupTotals[g].peak = pk;
+      });
+      // Score = max peak across groups + variance between group totals
+      const peakDiff = Math.abs(groupTotals.A.peak - groupTotals.B.peak);
+      const totalDiff = Math.abs(groupTotals.A.total - groupTotals.B.total);
+      return peakDiff * 3 + totalDiff;
+    }
+
+    // Individual mode: minimize variance in peaks + totals
+    const peaks = participants.map(p => focusLoads[p.id].peak);
+    const totals = participants.map(p => focusLoads[p.id].total);
+    const peakVar = Math.max(...peaks) - Math.min(...peaks);
+    const totalVar = Math.max(...totals) - Math.min(...totals);
+    return peakVar * 3 + totalVar;
+  }
+
+  // Get swappable customers (meet minimum volume threshold)
+  const swappable = Object.entries(custHourly)
+    .filter(([cn, data]) => data.total >= minJobs)
+    .map(([cn, data]) => cn);
+
+  // Greedy optimization: find best swap at each step
+  const swaps = [];
+  const workingCustMap = {};
+  Object.entries(custHourly).forEach(([cn, data]) => {
+    workingCustMap[cn] = { hours: [...data.hours], total: data.total, owner: data.owner };
+  });
+
+  let currentScore = scoreBalance(buildParticipantHourly(workingCustMap));
+  const origScore = currentScore;
+
+  for (let step = 0; step < maxSwaps; step++) {
+    let bestSwap = null;
+    let bestScore = currentScore;
+
+    for (let i = 0; i < swappable.length; i++) {
+      const cn = swappable[i];
+      const cData = workingCustMap[cn];
+      if (!cData) continue;
+      const fromId = cData.owner;
+
+      for (let j = 0; j < participants.length; j++) {
+        const toP = participants[j];
+        if (toP.id === fromId) continue;
+
+        // Try moving customer cn from fromId to toP.id
+        cData.owner = toP.id;
+        const testHourly = buildParticipantHourly(workingCustMap);
+        const testScore = scoreBalance(testHourly);
+        cData.owner = fromId; // restore
+
+        if (testScore < bestScore) {
+          bestScore = testScore;
+          bestSwap = { customer: cn, from: fromId, to: toP.id, score: testScore, jobs: cData.total };
+        }
+      }
+    }
+
+    if (!bestSwap || bestScore >= currentScore) break; // no improvement
+
+    // Apply the swap
+    workingCustMap[bestSwap.customer].owner = bestSwap.to;
+    const fromName = participants.find(p => p.id === bestSwap.from)?.name || bestSwap.from;
+    const toName = participants.find(p => p.id === bestSwap.to)?.name || bestSwap.to;
+    swaps.push({ ...bestSwap, fromName, toName, improvement: ((1 - bestScore / origScore) * 100).toFixed(1) });
+    currentScore = bestScore;
+  }
+
+  const proposedHourly = buildParticipantHourly(workingCustMap);
+
+  // ── Render results ──
+  renderOptimizerResults(participants, currentHourly, proposedHourly, swaps, origScore, currentScore, hourStart, hourEnd, timeField, custHourly, workingCustMap);
+}
+
+function renderOptimizerResults(participants, currentHourly, proposedHourly, swaps, origScore, finalScore, hourStart, hourEnd, timeField, origCustMap, proposedCustMap) {
+  const resultsEl = document.getElementById('wlo-results');
+  const timeLabel = timeField === 'booked_at' ? 'Booked' : timeField === 'pob_time' ? 'Collected' : 'Delivered';
+  const improvementPct = origScore > 0 ? ((1 - finalScore / origScore) * 100).toFixed(0) : 0;
+  const hasGroups = participants.some(p => p.group);
+
+  // Helper: compute stats for a person's hourly array
+  function getStats(hourly, hStart, hEnd) {
+    let total = 0, peak = 0, peakHour = 0;
+    for (let h = hStart; h <= Math.min(hEnd, 23); h++) {
+      total += hourly[h];
+      if (hourly[h] > peak) { peak = hourly[h]; peakHour = h; }
+    }
+    return { total, peak, peakHour };
+  }
+
+  // Mini heatmap renderer (hours as columns, single row)
+  function miniHeatmap(hourly, hStart, hEnd, maxVal, label) {
+    let html = '<div style="margin-bottom:4px;font-size:11px;color:#94a3b8;font-weight:500">' + label + '</div>';
+    html += '<div style="display:flex;gap:1px">';
+    for (let h = hStart; h <= Math.min(hEnd, 23); h++) {
+      const v = hourly[h] || 0;
+      const intensity = maxVal > 0 ? v / maxVal : 0;
+      let bg = '#1e293b';
+      if (intensity > 0 && intensity < 0.25) bg = 'rgba(59,130,246,' + (0.15 + intensity * 1.5) + ')';
+      else if (intensity >= 0.25 && intensity < 0.5) bg = 'rgba(234,179,8,' + (0.25 + intensity * 0.8) + ')';
+      else if (intensity >= 0.5 && intensity < 0.75) bg = 'rgba(249,115,22,' + (0.35 + intensity * 0.7) + ')';
+      else if (intensity >= 0.75) bg = 'rgba(239,68,68,' + (0.5 + intensity * 0.5) + ')';
+      html += '<div style="width:100%;min-width:16px;height:24px;background:' + bg + ';border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;color:' + (intensity > 0.4 ? '#fff' : '#64748b') + '">' + (v > 0 ? v : '') + '</div>';
+    }
+    html += '</div>';
+    // Hour labels
+    html += '<div style="display:flex;gap:1px">';
+    for (let h = hStart; h <= Math.min(hEnd, 23); h++) {
+      html += '<div style="width:100%;min-width:16px;text-align:center;font-size:9px;color:#475569">' + String(h).padStart(2,'0') + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // Find global max for consistent colour scaling
+  let globalMax = 0;
+  participants.forEach(p => {
+    for (let h = hourStart; h <= Math.min(hourEnd, 23); h++) {
+      if (currentHourly[p.id][h] > globalMax) globalMax = currentHourly[p.id][h];
+      if (proposedHourly[p.id][h] > globalMax) globalMax = proposedHourly[p.id][h];
+    }
+  });
+
+  // Summary cards
+  let summaryHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">';
+  summaryHtml += '<div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px"><div style="font-size:11px;color:#94a3b8">Swaps suggested</div><div style="font-size:22px;font-weight:600;color:#e2e8f0">' + swaps.length + '</div></div>';
+  summaryHtml += '<div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px"><div style="font-size:11px;color:#94a3b8">Balance improvement</div><div style="font-size:22px;font-weight:600;color:' + (improvementPct > 0 ? '#22c55e' : '#f59e0b') + '">' + improvementPct + '%</div></div>';
+  summaryHtml += '<div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px"><div style="font-size:11px;color:#94a3b8">Time type</div><div style="font-size:22px;font-weight:600;color:#e2e8f0">' + timeLabel + '</div></div>';
+  summaryHtml += '<div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px"><div style="font-size:11px;color:#94a3b8">Focus window</div><div style="font-size:22px;font-weight:600;color:#e2e8f0">' + String(hourStart).padStart(2,'0') + '–' + String(hourEnd).padStart(2,'0') + '</div></div>';
+  summaryHtml += '</div>';
+
+  // Swap proposals table
+  let swapHtml = '';
+  if (swaps.length > 0) {
+    swapHtml = '<div class="card" style="margin-bottom:16px"><h3 style="margin-bottom:12px;font-size:15px">Proposed changes</h3>';
+    swapHtml += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="border-bottom:1px solid #334155">';
+    swapHtml += '<th style="text-align:left;padding:8px;color:#94a3b8">#</th>';
+    swapHtml += '<th style="text-align:left;padding:8px;color:#94a3b8">Customer</th>';
+    swapHtml += '<th style="text-align:left;padding:8px;color:#94a3b8">From</th>';
+    swapHtml += '<th style="text-align:left;padding:8px;color:#94a3b8">To</th>';
+    swapHtml += '<th style="text-align:right;padding:8px;color:#94a3b8">Jobs</th>';
+    swapHtml += '<th style="text-align:right;padding:8px;color:#94a3b8">Cumulative improvement</th>';
+    swapHtml += '</tr></thead><tbody>';
+    swaps.forEach((s, i) => {
+      swapHtml += '<tr style="border-bottom:1px solid #1e293b">';
+      swapHtml += '<td style="padding:8px;color:#64748b">' + (i + 1) + '</td>';
+      swapHtml += '<td style="padding:8px;color:#e2e8f0;font-weight:500">' + s.customer + '</td>';
+      swapHtml += '<td style="padding:8px;color:#f87171">' + s.fromName + '</td>';
+      swapHtml += '<td style="padding:8px;color:#22c55e">' + s.toName + '</td>';
+      swapHtml += '<td style="padding:8px;text-align:right;color:#94a3b8">' + s.jobs.toLocaleString() + '</td>';
+      swapHtml += '<td style="padding:8px;text-align:right;color:#22c55e;font-weight:500">' + s.improvement + '%</td>';
+      swapHtml += '</tr>';
+    });
+    swapHtml += '</tbody></table></div>';
+  } else {
+    swapHtml = '<div class="card" style="margin-bottom:16px;color:#f59e0b">No beneficial swaps found with current settings. Try increasing max swaps or lowering the minimum job threshold.</div>';
+  }
+
+  // Toggle view for before/after per person
+  let viewHtml = '<div class="card" style="margin-bottom:16px">';
+  viewHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h3 style="margin:0;font-size:15px">Before vs After</h3>';
+  viewHtml += '<div style="display:flex;gap:8px"><button id="wlo-view-all" onclick="wloToggleView(\'all\')" style="background:#6366f1;border:none;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px">All</button>';
+  participants.forEach((p, i) => {
+    viewHtml += '<button id="wlo-view-' + i + '" onclick="wloToggleView(' + i + ')" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px">' + p.name + '</button>';
+  });
+  viewHtml += '</div></div>';
+
+  // Render all participants (individual toggleable sections)
+  participants.forEach((p, i) => {
+    const curStats = getStats(currentHourly[p.id], hourStart, hourEnd);
+    const propStats = getStats(proposedHourly[p.id], hourStart, hourEnd);
+    const peakChange = propStats.peak - curStats.peak;
+    const grpLabel = p.group ? ' <span style="font-size:11px;color:' + (p.group === 'A' ? '#a78bfa' : '#22d3ee') + ';font-weight:600">Group ' + p.group + '</span>' : '';
+
+    viewHtml += '<div class="wlo-person-view" data-idx="' + i + '" style="margin-bottom:20px;padding:16px;background:#0f172a;border:1px solid #334155;border-radius:8px">';
+    viewHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    viewHtml += '<div style="font-size:14px;font-weight:600;color:#e2e8f0">' + p.name + grpLabel + '</div>';
+    viewHtml += '<div style="display:flex;gap:12px;font-size:12px">';
+    viewHtml += '<span style="color:#94a3b8">Jobs: ' + curStats.total + ' → ' + propStats.total + '</span>';
+    viewHtml += '<span style="color:#94a3b8">Peak: ' + curStats.peak + ' → <span style="color:' + (peakChange < 0 ? '#22c55e' : peakChange > 0 ? '#f87171' : '#94a3b8') + '">' + propStats.peak + ' (' + (peakChange >= 0 ? '+' : '') + peakChange + ')</span></span>';
+    viewHtml += '</div></div>';
+    viewHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+    viewHtml += '<div>' + miniHeatmap(currentHourly[p.id], hourStart, hourEnd, globalMax, 'Current') + '</div>';
+    viewHtml += '<div>' + miniHeatmap(proposedHourly[p.id], hourStart, hourEnd, globalMax, 'Proposed') + '</div>';
+    viewHtml += '</div></div>';
+  });
+
+  // Group comparison if groups are set
+  if (hasGroups) {
+    const grpAMembers = participants.filter(p => p.group === 'A');
+    const grpBMembers = participants.filter(p => p.group === 'B');
+    if (grpAMembers.length > 0 && grpBMembers.length > 0) {
+      const grpACurrent = Array(24).fill(0);
+      const grpBCurrent = Array(24).fill(0);
+      const grpAProposed = Array(24).fill(0);
+      const grpBProposed = Array(24).fill(0);
+      grpAMembers.forEach(p => { for (let h = 0; h < 24; h++) { grpACurrent[h] += currentHourly[p.id][h]; grpAProposed[h] += proposedHourly[p.id][h]; } });
+      grpBMembers.forEach(p => { for (let h = 0; h < 24; h++) { grpBCurrent[h] += currentHourly[p.id][h]; grpBProposed[h] += proposedHourly[p.id][h]; } });
+
+      let grpMax = 0;
+      for (let h = hourStart; h <= Math.min(hourEnd, 23); h++) {
+        grpMax = Math.max(grpMax, grpACurrent[h], grpBCurrent[h], grpAProposed[h], grpBProposed[h]);
+      }
+
+      const grpAcStats = getStats(grpACurrent, hourStart, hourEnd);
+      const grpBcStats = getStats(grpBCurrent, hourStart, hourEnd);
+      const grpApStats = getStats(grpAProposed, hourStart, hourEnd);
+      const grpBpStats = getStats(grpBProposed, hourStart, hourEnd);
+
+      viewHtml += '<div style="margin-top:20px;padding:16px;background:#0f172a;border:1px solid #334155;border-radius:8px">';
+      viewHtml += '<div style="font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:12px">Group comparison</div>';
+      viewHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px">';
+      viewHtml += '<div><div style="font-size:12px;color:#a78bfa;font-weight:600;margin-bottom:4px">Group A: ' + grpAMembers.map(p => p.name).join(' + ') + '</div>';
+      viewHtml += '<div style="font-size:11px;color:#94a3b8;margin-bottom:6px">Jobs: ' + grpAcStats.total + ' → ' + grpApStats.total + ' | Peak: ' + grpAcStats.peak + ' → ' + grpApStats.peak + '</div>';
+      viewHtml += miniHeatmap(grpACurrent, hourStart, hourEnd, grpMax, 'Current') + '<div style="height:8px"></div>' + miniHeatmap(grpAProposed, hourStart, hourEnd, grpMax, 'Proposed');
+      viewHtml += '</div>';
+      viewHtml += '<div><div style="font-size:12px;color:#22d3ee;font-weight:600;margin-bottom:4px">Group B: ' + grpBMembers.map(p => p.name).join(' + ') + '</div>';
+      viewHtml += '<div style="font-size:11px;color:#94a3b8;margin-bottom:6px">Jobs: ' + grpBcStats.total + ' → ' + grpBpStats.total + ' | Peak: ' + grpBcStats.peak + ' → ' + grpBpStats.peak + '</div>';
+      viewHtml += miniHeatmap(grpBCurrent, hourStart, hourEnd, grpMax, 'Current') + '<div style="height:8px"></div>' + miniHeatmap(grpBProposed, hourStart, hourEnd, grpMax, 'Proposed');
+      viewHtml += '</div></div></div>';
+    }
+  }
+
+  viewHtml += '</div>';
+
+  resultsEl.innerHTML = summaryHtml + swapHtml + viewHtml;
+}
+
+function wloToggleView(idx) {
+  const views = document.querySelectorAll('.wlo-person-view');
+  const btns = document.querySelectorAll('[id^="wlo-view-"]');
+  if (idx === 'all') {
+    views.forEach(v => v.style.display = '');
+    btns.forEach(b => { b.style.background = b.id === 'wlo-view-all' ? '#6366f1' : '#1e293b'; b.style.color = b.id === 'wlo-view-all' ? '#fff' : '#94a3b8'; });
+  } else {
+    views.forEach(v => { v.style.display = v.dataset.idx === String(idx) ? '' : 'none'; });
+    btns.forEach(b => { const active = b.id === 'wlo-view-' + idx; b.style.background = active ? '#6366f1' : '#1e293b'; b.style.color = active ? '#fff' : '#94a3b8'; });
+    document.getElementById('wlo-view-all').style.background = '#1e293b';
+    document.getElementById('wlo-view-all').style.color = '#94a3b8';
+  }
+}
+
 </script>
 </body>
 </html>

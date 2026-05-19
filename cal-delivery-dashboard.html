@@ -2770,7 +2770,49 @@ function renderInsights(el) {
     </td></tr>`;
   }
 
+  // \u2500\u2500 HEATMAP: Build customer\u2192team lookup from DATA.teams \u2500\u2500
+  const custTeamMap = {}; // customer_name \u2192 [team_id, ...]
+  (DATA.teams || []).forEach(t => {
+    (t.customers || []).forEach(cName => {
+      if (!custTeamMap[cName]) custTeamMap[cName] = [];
+      custTeamMap[cName].push(t.id);
+    });
+  });
+
   el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-bottom:12px">Job Volume Heatmap</h3>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-bottom:14px">
+        <div>
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:6px;font-weight:500">Time type</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="hm-time-chk" value="ready_at" checked style="accent-color:#3b82f6"> Ready at
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="hm-time-chk" value="pob_time" style="accent-color:#22c55e"> Collected (POB)
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="hm-time-chk" value="pod_time" style="accent-color:#f59e0b"> Delivered (POD)
+            </label>
+          </div>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:6px;font-weight:500">Filter by team</div>
+          <div id="hm-team-filters" style="display:flex;gap:6px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="hm-team-chk" value="__all__" checked style="accent-color:#3b82f6"> All teams
+            </label>
+            ${(DATA.teams || []).map(t => `<label style="display:flex;align-items:center;gap:5px;background:#0f172a;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="hm-team-chk" value="${t.id}" style="accent-color:#8b5cf6"> ${t.name}
+            </label>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div id="hm-summary" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
+      <div id="hm-grid" style="overflow-x:auto"></div>
+    </div>
+
     <div class="range-info">Rate Review \u2014 ${numWeeks} week(s) selected</div>
 
     <div class="card" style="margin-bottom:16px">
@@ -2992,6 +3034,135 @@ function renderInsights(el) {
       if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     }, 10);
   }
+
+  // ── HEATMAP: wire up controls and render ──
+  function buildHeatmap() {
+    const timeChecks = document.querySelectorAll('.hm-time-chk');
+    const teamChecks = document.querySelectorAll('.hm-team-chk');
+    const selectedTimes = [];
+    timeChecks.forEach(c => { if (c.checked) selectedTimes.push(c.value); });
+    const allTeamsChk = document.querySelector('.hm-team-chk[value="__all__"]');
+    const isAllTeams = allTeamsChk && allTeamsChk.checked;
+    const selectedTeamIds = new Set();
+    if (!isAllTeams) {
+      teamChecks.forEach(c => { if (c.checked && c.value !== '__all__') selectedTeamIds.add(c.value); });
+    }
+
+    // Build set of customers for selected teams
+    let teamCustomers = null; // null = all
+    if (!isAllTeams && selectedTeamIds.size > 0) {
+      teamCustomers = new Set();
+      (DATA.teams || []).forEach(t => {
+        if (selectedTeamIds.has(String(t.id))) {
+          (t.customers || []).forEach(cn => teamCustomers.add(cn));
+        }
+      });
+    }
+
+    // Heatmap grid: 7 days (Mon-Sun) × 24 hours
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const grid = Array.from({ length: 24 }, () => Array(7).fill(0));
+    let totalCounted = 0;
+    let jobsMissingTime = 0;
+
+    jobs.forEach(j => {
+      // Team filter: check if this job's customer belongs to selected teams
+      if (teamCustomers) {
+        const resolvedCust = aliasMap[j.customer_name] || j.customer_name;
+        if (!teamCustomers.has(resolvedCust) && !teamCustomers.has(j.customer_name)) return;
+      }
+
+      selectedTimes.forEach(field => {
+        const raw = j[field];
+        if (!raw) { jobsMissingTime++; return; }
+        const dt = new Date(raw);
+        if (isNaN(dt.getTime())) { jobsMissingTime++; return; }
+        const hour = dt.getUTCHours();
+        let dow = dt.getUTCDay(); // 0=Sun
+        dow = dow === 0 ? 6 : dow - 1; // shift to 0=Mon
+        grid[hour][dow]++;
+        totalCounted++;
+      });
+    });
+
+    // Find max for colour scaling
+    let maxVal = 0;
+    grid.forEach(row => row.forEach(v => { if (v > maxVal) maxVal = v; }));
+
+    // Summary text
+    const summaryEl = document.getElementById('hm-summary');
+    const teamLabel = isAllTeams ? 'all teams' : (selectedTeamIds.size === 0 ? 'no teams selected' : selectedTeamIds.size + ' team(s)');
+    const timeLabel = selectedTimes.map(t => t === 'ready_at' ? 'Ready at' : t === 'pob_time' ? 'Collected' : 'Delivered').join(' + ');
+    summaryEl.textContent = totalCounted.toLocaleString() + ' data points from ' + timeLabel + ' — ' + teamLabel +
+      (jobsMissingTime > 0 ? ' (' + jobsMissingTime.toLocaleString() + ' missing timestamps)' : '');
+
+    if (selectedTimes.length === 0) {
+      document.getElementById('hm-grid').innerHTML = '<div style="color:#64748b;font-size:13px;padding:12px">Select at least one time type above.</div>';
+      return;
+    }
+
+    // Render the heatmap table
+    const cellBg = (val) => {
+      if (val === 0 || maxVal === 0) return 'background:#1e293b;color:#475569';
+      const intensity = val / maxVal;
+      // Gradient from dark blue (#1e3a5f) to bright red (#ef4444)
+      if (intensity < 0.25) return 'background:rgba(59,130,246,' + (0.1 + intensity * 1.2) + ');color:#94a3b8';
+      if (intensity < 0.5) return 'background:rgba(234,179,8,' + (0.2 + intensity * 0.8) + ');color:#1e293b';
+      if (intensity < 0.75) return 'background:rgba(249,115,22,' + (0.3 + intensity * 0.7) + ');color:#fff';
+      return 'background:rgba(239,68,68,' + (0.5 + intensity * 0.5) + ');color:#fff';
+    };
+
+    let html = '<table style="border-collapse:collapse;width:100%;font-size:12px;text-align:center">';
+    html += '<thead><tr><th style="padding:6px 4px;color:#64748b;text-align:right;min-width:50px">Hour</th>';
+    DAYS.forEach(d => { html += '<th style="padding:6px 8px;color:#94a3b8;font-weight:600">' + d + '</th>'; });
+    html += '<th style="padding:6px 8px;color:#94a3b8;font-weight:500">Total</th></tr></thead><tbody>';
+
+    for (let h = 0; h < 24; h++) {
+      const hourLabel = String(h).padStart(2, '0') + ':00';
+      const rowTotal = grid[h].reduce((s, v) => s + v, 0);
+      html += '<tr><td style="padding:4px 8px;color:#64748b;text-align:right;font-weight:500;white-space:nowrap">' + hourLabel + '</td>';
+      for (let d = 0; d < 7; d++) {
+        const v = grid[h][d];
+        html += '<td style="padding:6px 4px;border-radius:4px;font-weight:500;' + cellBg(v) + '">' + (v > 0 ? v : '') + '</td>';
+      }
+      html += '<td style="padding:4px 8px;color:#94a3b8;font-weight:500">' + (rowTotal > 0 ? rowTotal : '') + '</td>';
+      html += '</tr>';
+    }
+
+    // Day totals row
+    html += '<tr style="border-top:1px solid #334155"><td style="padding:6px 8px;color:#94a3b8;text-align:right;font-weight:600">Total</td>';
+    for (let d = 0; d < 7; d++) {
+      let dayTotal = 0;
+      for (let h = 0; h < 24; h++) dayTotal += grid[h][d];
+      html += '<td style="padding:6px 4px;color:#94a3b8;font-weight:600">' + (dayTotal > 0 ? dayTotal : '') + '</td>';
+    }
+    html += '<td style="padding:6px 8px;color:#e2e8f0;font-weight:700">' + totalCounted.toLocaleString() + '</td>';
+    html += '</tr></tbody></table>';
+
+    document.getElementById('hm-grid').innerHTML = html;
+  }
+
+  // Wire checkbox events
+  document.querySelectorAll('.hm-time-chk').forEach(c => { c.onchange = buildHeatmap; });
+  document.querySelectorAll('.hm-team-chk').forEach(c => {
+    c.onchange = () => {
+      const allChk = document.querySelector('.hm-team-chk[value="__all__"]');
+      if (c.value === '__all__' && c.checked) {
+        // Uncheck all individual teams when "All" is checked
+        document.querySelectorAll('.hm-team-chk:not([value="__all__"])').forEach(t => { t.checked = false; });
+      } else if (c.value !== '__all__' && c.checked) {
+        // Uncheck "All" when any individual team is checked
+        if (allChk) allChk.checked = false;
+      }
+      // If nothing is checked, re-check All
+      const anyChecked = [...document.querySelectorAll('.hm-team-chk')].some(t => t.checked);
+      if (!anyChecked && allChk) allChk.checked = true;
+      buildHeatmap();
+    };
+  });
+
+  // Initial render
+  buildHeatmap();
 }
 
 // ── SALES ──

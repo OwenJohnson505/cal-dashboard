@@ -2808,6 +2808,17 @@ function renderInsights(el) {
             </label>`).join('')}
           </div>
         </div>
+        <div style="min-width:180px">
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:6px;font-weight:500">Filter by customer</div>
+          <div id="hm-cust-dropdown" style="position:relative">
+            <button id="hm-cust-btn" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center">
+              <span id="hm-cust-label">All customers</span>
+              <span style="font-size:10px;margin-left:6px">▼</span>
+            </button>
+            <div id="hm-cust-panel" style="display:none;position:absolute;top:100%;left:0;right:0;min-width:220px;max-height:260px;overflow-y:auto;background:#0f172a;border:1px solid #334155;border-radius:6px;z-index:50;margin-top:4px;padding:4px 0">
+            </div>
+          </div>
+        </div>
       </div>
       <div id="hm-summary" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
       <div id="hm-grid" style="overflow-x:auto"></div>
@@ -3036,6 +3047,73 @@ function renderInsights(el) {
   }
 
   // ── HEATMAP: wire up controls and render ──
+  function populateCustomerDropdown() {
+    const allTeamsChk = document.querySelector('.hm-team-chk[value="__all__"]');
+    const isAllTeams = allTeamsChk && allTeamsChk.checked;
+    const panel = document.getElementById('hm-cust-panel');
+    if (!panel) return;
+
+    // Determine which customers to show
+    let custList = [];
+    if (isAllTeams) {
+      // All unique customers from jobs
+      const custSet = new Set();
+      jobs.forEach(j => { if (j.customer_name) custSet.add(j.customer_name); });
+      custList = [...custSet].sort((a, b) => a.localeCompare(b));
+    } else {
+      const selectedTeamIds = new Set();
+      document.querySelectorAll('.hm-team-chk').forEach(c => {
+        if (c.checked && c.value !== '__all__') selectedTeamIds.add(c.value);
+      });
+      const custSet = new Set();
+      (DATA.teams || []).forEach(t => {
+        if (selectedTeamIds.has(String(t.id))) {
+          (t.customers || []).forEach(cn => custSet.add(cn));
+        }
+      });
+      custList = [...custSet].sort((a, b) => a.localeCompare(b));
+    }
+
+    // Build dropdown options
+    let html = '<label style="display:flex;align-items:center;gap:6px;padding:5px 10px;cursor:pointer;font-size:12px;color:#e2e8f0;border-bottom:1px solid #1e293b">' +
+      '<input type="checkbox" class="hm-cust-chk" value="__all__" checked style="accent-color:#3b82f6"> All customers (' + custList.length + ')</label>';
+    custList.forEach(c => {
+      html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;cursor:pointer;font-size:12px;color:#cbd5e1">' +
+        '<input type="checkbox" class="hm-cust-chk" value="' + c.replace(/"/g, '&quot;') + '" style="accent-color:#8b5cf6"> ' + c + '</label>';
+    });
+    panel.innerHTML = html;
+
+    // Wire customer checkbox events
+    panel.querySelectorAll('.hm-cust-chk').forEach(c => {
+      c.onchange = () => {
+        const allCustChk = panel.querySelector('.hm-cust-chk[value="__all__"]');
+        if (c.value === '__all__' && c.checked) {
+          panel.querySelectorAll('.hm-cust-chk:not([value="__all__"])').forEach(t => { t.checked = false; });
+        } else if (c.value !== '__all__' && c.checked) {
+          if (allCustChk) allCustChk.checked = false;
+        }
+        // If nothing checked, re-check All
+        const anyChecked = [...panel.querySelectorAll('.hm-cust-chk')].some(t => t.checked);
+        if (!anyChecked && allCustChk) allCustChk.checked = true;
+        updateCustLabel();
+        buildHeatmap();
+      };
+    });
+    updateCustLabel();
+  }
+
+  function updateCustLabel() {
+    const label = document.getElementById('hm-cust-label');
+    if (!label) return;
+    const panel = document.getElementById('hm-cust-panel');
+    const allChk = panel.querySelector('.hm-cust-chk[value="__all__"]');
+    if (allChk && allChk.checked) { label.textContent = 'All customers'; return; }
+    const checked = [...panel.querySelectorAll('.hm-cust-chk:checked:not([value="__all__"])')];
+    if (checked.length === 0) { label.textContent = 'All customers'; return; }
+    if (checked.length === 1) { label.textContent = checked[0].value; return; }
+    label.textContent = checked.length + ' customers selected';
+  }
+
   function buildHeatmap() {
     const timeChecks = document.querySelectorAll('.hm-time-chk');
     const teamChecks = document.querySelectorAll('.hm-team-chk');
@@ -3059,11 +3137,27 @@ function renderInsights(el) {
       });
     }
 
+    // Build set of customers for customer dropdown filter
+    const custPanel = document.getElementById('hm-cust-panel');
+    let selectedCustomers = null; // null = all
+    if (custPanel) {
+      const allCustChk = custPanel.querySelector('.hm-cust-chk[value="__all__"]');
+      if (!allCustChk || !allCustChk.checked) {
+        const checkedCusts = custPanel.querySelectorAll('.hm-cust-chk:checked:not([value="__all__"])');
+        if (checkedCusts.length > 0) {
+          selectedCustomers = new Set();
+          checkedCusts.forEach(c => selectedCustomers.add(c.value));
+        }
+      }
+    }
+
     // Heatmap grid: 7 days (Mon-Sun) × 24 hours
     const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const grid = Array.from({ length: 24 }, () => Array(7).fill(0));
     let totalCounted = 0;
-    let jobsMissingTime = 0;
+    let missingNull = 0;
+    let missingMidnight = 0;
+    let missingInvalid = 0;
 
     jobs.forEach(j => {
       // Team filter: check if this job's customer belongs to selected teams
@@ -3071,14 +3165,19 @@ function renderInsights(el) {
         const resolvedCust = aliasMap[j.customer_name] || j.customer_name;
         if (!teamCustomers.has(resolvedCust) && !teamCustomers.has(j.customer_name)) return;
       }
+      // Customer dropdown filter
+      if (selectedCustomers) {
+        const resolvedCust = aliasMap[j.customer_name] || j.customer_name;
+        if (!selectedCustomers.has(resolvedCust) && !selectedCustomers.has(j.customer_name)) return;
+      }
 
       selectedTimes.forEach(field => {
         const raw = j[field];
-        if (!raw) { jobsMissingTime++; return; }
+        if (!raw) { missingNull++; return; }
         const dt = new Date(raw);
-        if (isNaN(dt.getTime())) { jobsMissingTime++; return; }
+        if (isNaN(dt.getTime())) { missingInvalid++; return; }
         // Skip midnight timestamps — these are date-only values with no real time
-        if (dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) { jobsMissingTime++; return; }
+        if (dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) { missingMidnight++; return; }
         const hour = dt.getUTCHours();
         let dow = dt.getUTCDay(); // 0=Sun
         dow = dow === 0 ? 6 : dow - 1; // shift to 0=Mon
@@ -3095,8 +3194,16 @@ function renderInsights(el) {
     const summaryEl = document.getElementById('hm-summary');
     const teamLabel = isAllTeams ? 'all teams' : (selectedTeamIds.size === 0 ? 'no teams selected' : selectedTeamIds.size + ' team(s)');
     const timeLabel = selectedTimes.map(t => t === 'ready_at' ? 'Ready at' : t === 'pob_time' ? 'Collected' : 'Delivered').join(' + ');
-    summaryEl.textContent = totalCounted.toLocaleString() + ' data points from ' + timeLabel + ' — ' + teamLabel +
-      (jobsMissingTime > 0 ? ' (' + jobsMissingTime.toLocaleString() + ' missing timestamps)' : '');
+    const totalMissing = missingNull + missingMidnight + missingInvalid;
+    let missingDetail = '';
+    if (totalMissing > 0) {
+      const parts = [];
+      if (missingNull > 0) parts.push(missingNull.toLocaleString() + ' no timestamp');
+      if (missingMidnight > 0) parts.push(missingMidnight.toLocaleString() + ' date-only');
+      if (missingInvalid > 0) parts.push(missingInvalid.toLocaleString() + ' invalid');
+      missingDetail = ' (' + totalMissing.toLocaleString() + ' missing: ' + parts.join(', ') + ')';
+    }
+    summaryEl.textContent = totalCounted.toLocaleString() + ' data points from ' + timeLabel + ' — ' + teamLabel + missingDetail;
 
     if (selectedTimes.length === 0) {
       document.getElementById('hm-grid').innerHTML = '<div style="color:#64748b;font-size:13px;padding:12px">Select at least one time type above.</div>';
@@ -3159,11 +3266,31 @@ function renderInsights(el) {
       // If nothing is checked, re-check All
       const anyChecked = [...document.querySelectorAll('.hm-team-chk')].some(t => t.checked);
       if (!anyChecked && allChk) allChk.checked = true;
+      // Repopulate customer dropdown based on new team selection
+      populateCustomerDropdown();
       buildHeatmap();
     };
   });
 
-  // Initial render
+  // Wire customer dropdown toggle
+  const custBtn = document.getElementById('hm-cust-btn');
+  const custPanel = document.getElementById('hm-cust-panel');
+  if (custBtn && custPanel) {
+    custBtn.onclick = (e) => {
+      e.stopPropagation();
+      custPanel.style.display = custPanel.style.display === 'none' ? 'block' : 'none';
+    };
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!custPanel.contains(e.target) && e.target !== custBtn) {
+        custPanel.style.display = 'none';
+      }
+    });
+    custPanel.onclick = (e) => e.stopPropagation();
+  }
+
+  // Initial populate and render
+  populateCustomerDropdown();
   buildHeatmap();
 }
 

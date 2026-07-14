@@ -1774,24 +1774,128 @@ function renderTeams(el) {
 let _tbdTeamId = null;
 let _tbdSortField = 'revenue';
 let _tbdSortDir = 'desc';
+let _tbdRows = [];                  // rows as currently rendered (index = onclick key)
+let _tbdExpanded = new Set();       // account names with the job-level detail open
+
+// alias_name → canonical_name (same resolution applyFilter uses)
+function buildAliasMap() {
+  const m = {};
+  (ALL_DATA.customerAliases || []).forEach(a => { m[a.alias_name] = a.canonical_name; });
+  return m;
+}
+const resolveAccount = (name, aliasMap) => (aliasMap || buildAliasMap())[name] || name;
+
+// Quote records aggregated per CANONICAL account (alias-aware), respecting the active filter.
+// Keyed by normaliseQName(canonical name) so quote-file spellings still land on the right account.
+function buildTeamQuoteMap() {
+  const map = {};
+  if (!quoteData) return map;
+  const aliasMap = buildAliasMap();
+  const depotActive = selectedDepot !== 'both';
+  const depotMatch = d => !depotActive || d === selectedDepot;
+  const validWeeks = (DATA.weeks && DATA.weeks.length > 0) ? new Set(DATA.weeks.map(w => w.week_label)) : null;
+  const inWeek = q => !validWeeks || !q.week_label || validWeeks.has(q.week_label);
+
+  const ensure = key => {
+    if (!map[key]) map[key] = { converted: 0, nonConverted: 0, cancelled: 0, convertedRevenue: 0, nonConvertedRevenue: 0, cancelledRevenue: 0, reasons: {} };
+    return map[key];
+  };
+  const keyFor = raw => {
+    const k = normaliseQName(resolveAccount((raw || '').trim(), aliasMap));
+    return k || null;
+  };
+
+  (quoteData.converted || []).filter(q => depotMatch(q.depot) && inWeek(q)).forEach(q => {
+    const k = keyFor(q.customer_name); if (!k) return;
+    const e = ensure(k); e.converted++; e.convertedRevenue += Number(q.income || 0);
+  });
+  (quoteData.nonConverted || []).filter(q => depotMatch(q.depot) && inWeek(q)).forEach(q => {
+    const k = keyFor(q.customer_name); if (!k) return;
+    const e = ensure(k); e.nonConverted++; e.nonConvertedRevenue += Number(q.income || 0);
+  });
+  (quoteData.cancelled || []).filter(q => depotMatch(q.depot) && inWeek(q)).forEach(q => {
+    const k = keyFor(q.customer_name); if (!k) return;
+    const e = ensure(k); e.cancelled++; e.cancelledRevenue += Number(q.value || 0);
+    const rc = q.reason_code || 'Non-Compliant';
+    e.reasons[rc] = (e.reasons[rc] || 0) + 1;
+  });
+  return map;
+}
+
+// canonical account → weekly revenue array aligned to the filtered week list (for sparklines)
+function buildAccountWeeklySeries() {
+  const weeks = (DATA.weeks || []).map(w => w.week_label).sort();
+  const idx = {};
+  weeks.forEach((w, i) => { idx[w] = i; });
+  const aliasMap = buildAliasMap();
+  const depotActive = selectedDepot !== 'both';
+  const series = {};
+  (ALL_DATA.rawCustomers || []).forEach(c => {
+    if (!Object.prototype.hasOwnProperty.call(idx, c.week_label)) return;
+    if (depotActive && c.depot !== selectedDepot) return;
+    const name = resolveAccount(c.customer_name, aliasMap);
+    if (!series[name]) series[name] = new Array(weeks.length).fill(0);
+    series[name][idx[c.week_label]] += Number(c.revenue || 0);
+  });
+  return { weeks, series };
+}
+
+// Inline SVG sparkline — green if trending up, red if down
+function sparklineSVG(vals, w, h) {
+  if (!vals || vals.length < 2) return '<span style="color:#475569">—</span>';
+  const max = Math.max.apply(null, vals);
+  const min = Math.min.apply(null, vals);
+  const range = (max - min) || 1;
+  const step = (w - 2) / (vals.length - 1);
+  const pts = vals.map((v, i) => (1 + i * step).toFixed(1) + ',' + (h - 1 - ((v - min) / range) * (h - 2)).toFixed(1)).join(' ');
+  const up = vals[vals.length - 1] >= vals[0];
+  const color = up ? '#4ade80' : '#f87171';
+  const lastX = (1 + (vals.length - 1) * step).toFixed(1);
+  const lastY = (h - 1 - ((vals[vals.length - 1] - min) / range) * (h - 2)).toFixed(1);
+  return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" style="vertical-align:middle">' +
+    '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<circle cx="' + lastX + '" cy="' + lastY + '" r="1.8" fill="' + color + '"/></svg>';
+}
+
+// Trend: average revenue of the 2nd half of the period vs the 1st half (less noisy than first-vs-last week)
+function trendPctFromSeries(vals) {
+  if (!vals || vals.length < 2) return null;
+  const mid = Math.floor(vals.length / 2);
+  const h1 = vals.slice(0, mid), h2 = vals.slice(mid);
+  if (!h1.length || !h2.length) return null;
+  const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+  const a1 = avg(h1);
+  if (a1 <= 0) return null;
+  return (avg(h2) - a1) / a1 * 100;
+}
+
+// Individual job rows for one canonical account (respects active filter)
+function getAccountJobs(accountName) {
+  const aliasMap = buildAliasMap();
+  const depotActive = selectedDepot !== 'both';
+  const validWeeks = new Set((DATA.weeks || []).map(w => w.week_label));
+  return (ALL_DATA.rawJobs || [])
+    .filter(j => validWeeks.has(j.week_label) && (!depotActive || j.depot === selectedDepot) && resolveAccount(j.customer_name, aliasMap) === accountName)
+    .sort((a, b) => String(a.week_label).localeCompare(String(b.week_label)) || String(a.job_no || '').localeCompare(String(b.job_no || '')));
+}
 
 // Build per-account rows for a team, joining job aggregates + quote conversion (respects active filter)
 function buildTeamAccountRows(team) {
   const custByName = {};
   (DATA.customers || []).forEach(c => { custByName[c.customer_name] = c; });
-
-  const qByNorm = {};
-  (typeof buildQuoteCustomerData === 'function' ? buildQuoteCustomerData() : []).forEach(q => {
-    qByNorm[normaliseQName(q.customerName)] = q;
-  });
+  const qMap = buildTeamQuoteMap();
+  const { series } = buildAccountWeeklySeries();
 
   return (team.customers || []).map(name => {
     const c = custByName[name] || { total_jobs: 0, total_revenue: 0, total_cost: 0, total_profit: 0, weeks_active: 0 };
-    const q = qByNorm[normaliseQName(name)] || null;
+    const q = qMap[normaliseQName(name)] || null;
     const jobs = Number(c.total_jobs) || 0;
     const revenue = Number(c.total_revenue) || 0;
     const cost = Number(c.total_cost) || 0;
     const profit = Number(c.total_profit) || 0;
+    const totalQuotes = q ? (q.converted + q.nonConverted + q.cancelled) : 0;
+    const vals = series[name] || null;
+    const topReason = (q && q.cancelled > 0) ? (Object.entries(q.reasons).sort((a, b) => b[1] - a[1])[0] || [''])[0] : '';
     return {
       account: name,
       jobs, revenue, cost, profit,
@@ -1799,14 +1903,18 @@ function buildTeamAccountRows(team) {
       avgRevPerJob: jobs > 0 ? revenue / jobs : 0,
       avgProfitPerJob: jobs > 0 ? profit / jobs : 0,
       weeksActive: Number(c.weeks_active) || 0,
-      totalQuotes: q ? q.totalQuotes : 0,
-      converted: q ? q.convertedCount : 0,
-      nonConverted: q ? q.nonConvertedCount : 0,
-      cancelled: q ? q.cancelledCount : 0,
-      conversionRate: q ? q.conversionRate : null,
+      totalQuotes,
+      converted: q ? q.converted : 0,
+      nonConverted: q ? q.nonConverted : 0,
+      cancelled: q ? q.cancelled : 0,
+      conversionRate: (q && totalQuotes > 0) ? (q.converted / totalQuotes * 100) : null,
       convertedRevenue: q ? q.convertedRevenue : 0,
       nonConvertedRevenue: q ? q.nonConvertedRevenue : 0,
-      hasQuotes: !!q
+      cancelledRevenue: q ? q.cancelledRevenue : 0,
+      topCancelReason: topReason,
+      hasQuotes: !!q && totalQuotes > 0,
+      weekly: vals,
+      trendPct: trendPctFromSeries(vals)
     };
   });
 }
@@ -1824,6 +1932,7 @@ function openTeamBreakdown(teamId) {
   _tbdTeamId = teamId;
   _tbdSortField = 'revenue';
   _tbdSortDir = 'desc';
+  _tbdExpanded = new Set();
   let overlay = document.getElementById('tbd-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -1847,9 +1956,62 @@ function closeTeamBreakdown() {
   _tbdTeamId = null;
 }
 
+// Expand/collapse the job-level detail under one account
+function toggleAccountJobs(i) {
+  const r = _tbdRows[i];
+  if (!r) return;
+  if (_tbdExpanded.has(r.account)) _tbdExpanded.delete(r.account); else _tbdExpanded.add(r.account);
+  const team = (DATA.teams || []).find(t => String(t.id) === String(_tbdTeamId));
+  if (team) renderTeamBreakdown(team);
+}
+
+const TBD_JOB_LIMIT = 300; // keep the DOM sane; the Excel export always has the full set
+
+// Nested row listing every individual job for one account
+function renderAccountJobsRow(accountName) {
+  const jobs = getAccountJobs(accountName);
+  const gbp2 = (typeof fGBP2 === 'function') ? fGBP2 : (x => fGBP(Math.round(x)));
+  const fwk = (typeof fWk === 'function') ? fWk : (x => x);
+  if (!jobs.length) {
+    return '<tr><td colspan="14" style="padding:12px 28px;color:#64748b;font-size:12px;background:#0b1220">No individual job rows loaded for this account in the selected period.</td></tr>';
+  }
+  const shown = jobs.slice(0, TBD_JOB_LIMIT);
+  const cell = 'padding:4px 8px;border-bottom:1px solid #1e293b;font-size:11px';
+  const head = 'padding:4px 8px;border-bottom:1px solid #334155;font-size:10px;color:#64748b;text-align:left;white-space:nowrap';
+  return '<tr><td colspan="14" style="padding:0 0 0 28px;background:#0b1220">' +
+    '<div style="max-height:320px;overflow:auto;padding:8px 8px 12px 0">' +
+    '<div style="font-size:11px;color:#94a3b8;margin:4px 0 6px">' + fNum(jobs.length) + ' job' + (jobs.length === 1 ? '' : 's') + ' — ' + accountName +
+      (jobs.length > TBD_JOB_LIMIT ? ' <span style="color:#fbbf24">(showing first ' + TBD_JOB_LIMIT + '; use the Excel export for all ' + fNum(jobs.length) + ')</span>' : '') + '</div>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+    '<thead><tr>' +
+      '<th style="' + head + '">Week</th><th style="' + head + '">Job No</th><th style="' + head + '">Sales</th><th style="' + head + '">Vehicle</th>' +
+      '<th style="' + head + '">Collection</th><th style="' + head + '">Delivery</th>' +
+      '<th style="' + head + ';text-align:right">Revenue</th><th style="' + head + ';text-align:right">Cost</th>' +
+      '<th style="' + head + ';text-align:right">Profit</th><th style="' + head + ';text-align:right">Margin</th>' +
+    '</tr></thead><tbody>' +
+    shown.map(j => {
+      const rev = Number(j.revenue || 0), cost = Number(j.cost || 0), profit = Number(j.profit || 0);
+      const m = rev > 0 ? (profit / rev * 100) : 0;
+      return '<tr>' +
+        '<td style="' + cell + '">' + fwk(j.week_label) + '</td>' +
+        '<td style="' + cell + '">' + (j.job_no || '—') + '</td>' +
+        '<td style="' + cell + '">' + (j.sales_name || '—') + '</td>' +
+        '<td style="' + cell + '">' + (j.vehicle || '—') + '</td>' +
+        '<td style="' + cell + '">' + (j.collection_postcode || '—') + '</td>' +
+        '<td style="' + cell + '">' + (j.delivery_postcode || '—') + '</td>' +
+        '<td style="' + cell + ';text-align:right">' + gbp2(rev) + '</td>' +
+        '<td style="' + cell + ';text-align:right">' + gbp2(cost) + '</td>' +
+        '<td style="' + cell + ';text-align:right;color:' + (profit >= 0 ? '#6ee7b7' : '#fca5a5') + '">' + gbp2(profit) + '</td>' +
+        '<td style="' + cell + ';text-align:right">' + m.toFixed(1) + '%</td>' +
+      '</tr>';
+    }).join('') +
+    '</tbody></table></div></td></tr>';
+}
+
 function renderTeamBreakdown(team) {
   const overlay = document.getElementById('tbd-overlay');
   if (!overlay) return;
+  const prevScroll = (document.getElementById('tbd-scroll') || {}).scrollTop || 0;
   const rows = buildTeamAccountRows(team);
 
   const dir = _tbdSortDir === 'desc' ? -1 : 1;
@@ -1860,6 +2022,7 @@ function renderTeamBreakdown(team) {
     if (typeof av === 'string') return _tbdSortDir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
     return (av - bv) * dir;
   });
+  _tbdRows = rows;
 
   const tJobs = rows.reduce((s, r) => s + r.jobs, 0);
   const tRev = rows.reduce((s, r) => s + r.revenue, 0);
@@ -1905,7 +2068,7 @@ function renderTeamBreakdown(team) {
       </div>
 
       <div class="card" style="padding:0">
-        <div style="max-height:calc(100vh - 280px);overflow:auto">
+        <div id="tbd-scroll" style="max-height:calc(100vh - 280px);overflow:auto">
           <table>
             <thead><tr>
               ${th('Account', 'account', false)}
@@ -1915,6 +2078,7 @@ function renderTeamBreakdown(team) {
               ${th('Profit', 'profit', true)}
               ${th('Margin', 'marginPct', true)}
               ${th('Avg £/Job', 'avgRevPerJob', true)}
+              ${th('Trend', 'trendPct', true)}
               ${th('Weeks', 'weeksActive', true)}
               ${th('Quotes', 'totalQuotes', true)}
               ${th('Conv', 'converted', true)}
@@ -1923,21 +2087,26 @@ function renderTeamBreakdown(team) {
               ${th('Conv %', 'conversionRate', true)}
             </tr></thead>
             <tbody>
-              ${rows.map(r => `<tr>
-                <td>${r.account}</td>
+              ${rows.map((r, i) => {
+                const open = _tbdExpanded.has(r.account);
+                const trendTitle = r.trendPct != null ? ('2nd half of period vs 1st: ' + (r.trendPct >= 0 ? '+' : '') + r.trendPct.toFixed(0) + '%') : 'Not enough weeks to trend';
+                return `<tr style="cursor:pointer${open ? ';background:#1e3a5f33' : ''}" onclick="toggleAccountJobs(${i})" title="Click to show every job for this account">
+                <td><span style="display:inline-block;width:12px;color:#3b82f6;font-size:10px">${open ? '▼' : '▶'}</span>${r.account}</td>
                 <td class="r">${fNum(r.jobs)}</td>
                 <td class="r">${fGBP(Math.round(r.revenue))}</td>
                 <td class="r">${fGBP(Math.round(r.cost))}</td>
                 <td class="r">${fGBP(Math.round(r.profit))}</td>
                 <td class="r"><span class="${mPill(r.marginPct)}">${r.marginPct.toFixed(1)}%</span></td>
                 <td class="r">${gbp2(r.avgRevPerJob)}</td>
+                <td class="r" title="${trendTitle}">${sparklineSVG(r.weekly, 60, 18)}${r.trendPct != null ? '<span style="font-size:10px;margin-left:4px;color:' + (r.trendPct >= 0 ? '#4ade80' : '#f87171') + '">' + (r.trendPct >= 0 ? '+' : '') + r.trendPct.toFixed(0) + '%</span>' : ''}</td>
                 <td class="r">${fNum(r.weeksActive)}</td>
                 <td class="r">${r.hasQuotes ? fNum(r.totalQuotes) : '—'}</td>
                 <td class="r">${r.hasQuotes ? fNum(r.converted) : '—'}</td>
                 <td class="r">${r.hasQuotes ? fNum(r.nonConverted) : '—'}</td>
-                <td class="r">${r.hasQuotes ? fNum(r.cancelled) : '—'}</td>
+                <td class="r"${r.topCancelReason ? ' title="Top reason: ' + r.topCancelReason + '"' : ''}>${r.hasQuotes ? fNum(r.cancelled) : '—'}</td>
                 <td class="r">${r.conversionRate != null ? '<span class="' + (r.conversionRate >= 60 ? 'pill pg' : r.conversionRate >= 40 ? 'pill pa' : 'pill pr') + '">' + r.conversionRate.toFixed(0) + '%</span>' : '—'}</td>
-              </tr>`).join('')}
+              </tr>${open ? renderAccountJobsRow(r.account) : ''}`;
+              }).join('')}
               <tr style="font-weight:700;border-top:2px solid #334155">
                 <td>Total</td>
                 <td class="r">${fNum(tJobs)}</td>
@@ -1945,6 +2114,7 @@ function renderTeamBreakdown(team) {
                 <td class="r">${fGBP(Math.round(tCost))}</td>
                 <td class="r">${fGBP(Math.round(tProfit))}</td>
                 <td class="r">${tMargin.toFixed(1)}%</td>
+                <td class="r">—</td>
                 <td class="r">—</td>
                 <td class="r">—</td>
                 <td class="r">${anyQuotes ? fNum(tQuotes) : '—'}</td>
@@ -1958,8 +2128,11 @@ function renderTeamBreakdown(team) {
         </div>
       </div>
       ${!anyQuotes ? '<p style="font-size:12px;color:#64748b;margin-top:12px">No quote data matched these accounts for the selected filter. Upload quote files in Admin to populate conversion metrics.</p>' : ''}
-      <p style="font-size:12px;color:#64748b;margin-top:12px">Tip: click any column header to re-sort. The Excel export includes this account summary plus the underlying raw job rows and quote records for the current filter, so you can re-slice the data yourself.</p>
+      <p style="font-size:12px;color:#64748b;margin-top:12px">Tip: click an account to expand every job behind its numbers, or click any column header to re-sort. The Excel export includes this account summary plus the underlying raw job rows and quote records for the current filter, so you can re-slice the data yourself.</p>
     </div>`;
+
+  const sc = document.getElementById('tbd-scroll');
+  if (sc) sc.scrollTop = prevScroll;
 }
 
 // ── Excel export of a team's raw + summary data (respects the active filter) ──
@@ -1972,10 +2145,11 @@ function exportTeamBreakdown(teamId) {
   const depotMatch = d => !depotActive || d === selectedDepot;
   const validWeeks = new Set((DATA.weeks || []).map(w => w.week_label));
 
-  const aliasMap = {};
-  (ALL_DATA.customerAliases || []).forEach(a => { aliasMap[a.alias_name] = a.canonical_name; });
+  const aliasMap = buildAliasMap();
   const teamCanon = new Set(team.customers || []);
   const teamNorm = new Set((team.customers || []).map(normaliseQName));
+  // alias-aware: resolve a quote's raw customer name to its canonical account before matching
+  const quoteInTeam = q => teamNorm.has(normaliseQName(resolveAccount((q.customer_name || '').trim(), aliasMap)));
 
   // Sheet 1 — Account Summary (aggregated per account)
   const summary = buildTeamAccountRows(team)
@@ -1990,13 +2164,16 @@ function exportTeamBreakdown(teamId) {
       'Avg Revenue/Job': Math.round(r.avgRevPerJob * 100) / 100,
       'Avg Profit/Job': Math.round(r.avgProfitPerJob * 100) / 100,
       'Weeks Active': r.weeksActive,
+      'Revenue Trend % (2nd half vs 1st)': r.trendPct != null ? Math.round(r.trendPct * 10) / 10 : '',
       'Total Quotes': r.hasQuotes ? r.totalQuotes : '',
       Converted: r.hasQuotes ? r.converted : '',
       'Non-Converted': r.hasQuotes ? r.nonConverted : '',
       Cancelled: r.hasQuotes ? r.cancelled : '',
       'Conversion %': r.conversionRate != null ? Math.round(r.conversionRate * 10) / 10 : '',
       'Converted Revenue': r.hasQuotes ? Math.round(r.convertedRevenue * 100) / 100 : '',
-      'Non-Converted Revenue': r.hasQuotes ? Math.round(r.nonConvertedRevenue * 100) / 100 : ''
+      'Non-Converted Revenue': r.hasQuotes ? Math.round(r.nonConvertedRevenue * 100) / 100 : '',
+      'Cancelled Revenue': r.hasQuotes ? Math.round(r.cancelledRevenue * 100) / 100 : '',
+      'Top Cancel Reason': r.topCancelReason || ''
     }));
 
   // Sheet 2 — Raw Jobs (every underlying job row for this team's accounts, current filter)
@@ -2017,17 +2194,17 @@ function exportTeamBreakdown(teamId) {
   const quoteRows = [];
   if (quoteData) {
     const inWeek = q => !q.week_label || validWeeks.has(q.week_label);
-    (quoteData.converted || []).filter(q => depotMatch(q.depot) && inWeek(q) && teamNorm.has(normaliseQName(q.customer_name))).forEach(q => quoteRows.push({
+    (quoteData.converted || []).filter(q => depotMatch(q.depot) && inWeek(q) && quoteInTeam(q)).forEach(q => quoteRows.push({
       Status: 'Converted', 'Customer': q.customer_name, 'Sales': q.sales_name, 'Created On': q.quote_created_on,
       'Value': Number(q.income || 0), 'Ref': q.our_ref || '', 'Tariff': q.tariff || '',
       'Issued By': q.quote_issued_by || '', 'Converted By': q.quote_converted_by || '', 'Depot': q.depot, 'Week': q.week_label, 'Reason': ''
     }));
-    (quoteData.nonConverted || []).filter(q => depotMatch(q.depot) && inWeek(q) && teamNorm.has(normaliseQName(q.customer_name))).forEach(q => quoteRows.push({
+    (quoteData.nonConverted || []).filter(q => depotMatch(q.depot) && inWeek(q) && quoteInTeam(q)).forEach(q => quoteRows.push({
       Status: 'Non-Converted', 'Customer': q.customer_name, 'Sales': q.sales_name, 'Created On': q.quote_created_on,
       'Value': Number(q.income || 0), 'Ref': q.quote_no || '', 'Tariff': q.tariff || '',
       'Issued By': q.quote_issued_by || '', 'Converted By': '', 'Depot': q.depot, 'Week': q.week_label, 'Reason': ''
     }));
-    (quoteData.cancelled || []).filter(q => depotMatch(q.depot) && inWeek(q) && teamNorm.has(normaliseQName(q.customer_name))).forEach(q => quoteRows.push({
+    (quoteData.cancelled || []).filter(q => depotMatch(q.depot) && inWeek(q) && quoteInTeam(q)).forEach(q => quoteRows.push({
       Status: 'Cancelled', 'Customer': q.customer_name, 'Sales': '', 'Created On': q.cancellation_date,
       'Value': Number(q.value || 0), 'Ref': q.our_ref || '', 'Tariff': '',
       'Issued By': '', 'Converted By': '', 'Depot': q.depot, 'Week': q.week_label, 'Reason': (q.reason_code || '') + (q.cancellation_reason ? ' — ' + q.cancellation_reason : '')

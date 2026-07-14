@@ -1710,7 +1710,7 @@ function renderTeams(el) {
     <div class="range-info">Showing ${t.length} teams for selected period</div>
     <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
       ${t.map(team => `
-        <div class="kpi">
+        <div class="kpi team-card" style="cursor:pointer" onclick="openTeamBreakdown('${String(team.id).replace(/'/g, "\\'")}')" title="Click to see the full account-level breakdown for this team">
           <div class="label">${team.name}${String(team.id).startsWith('_cs_') ? ' <span style="font-size:9px;background:#475569;color:#94a3b8;padding:2px 6px;border-radius:4px;margin-left:4px;font-weight:400">AUTO</span>' : ''}</div>
           <div style="font-size:14px;color:#94a3b8;margin:8px 0">
             <div>Jobs: ${fNum(team.total_jobs)}</div>
@@ -1718,6 +1718,7 @@ function renderTeams(el) {
             <div>Profit: ${fGBP(team.total_profit)}</div>
             <div style="margin-top:6px"><span class="${mPill(team.margin_pct)}">Margin: ${fPct(team.margin_pct)}</span></div>
           </div>
+          <div style="font-size:11px;color:#3b82f6;font-weight:600;margin-top:4px">${team.customers.length} accounts · View breakdown &rarr;</div>
         </div>
       `).join('')}
     </div>
@@ -1726,8 +1727,8 @@ function renderTeams(el) {
       <div class="card"><h3>Teams by Profit</h3><div class="chart-wrap"><canvas id="tc2"></canvas></div></div>
     </div>
     <div class="card"><h3>Team Performance</h3><div style="max-height:500px;overflow:auto">
-      <table><thead><tr><th>Team</th><th>Depot</th><th class="r">Jobs</th><th class="r">Revenue</th><th class="r">Profit</th><th class="r">Margin</th><th class="r">Customers</th></tr></thead>
-      <tbody>${t.map(x => `<tr><td>${x.name}</td><td>${x.depot||'\u2014'}</td><td class="r">${fNum(x.total_jobs)}</td><td class="r">${fGBP(x.total_revenue)}</td><td class="r">${fGBP(x.total_profit)}</td><td class="r"><span class="${mPill(x.margin_pct)}">${fPct(x.margin_pct)}</span></td><td class="r">${x.customers.length}</td></tr>`).join('')}</tbody></table>
+      <table><thead><tr><th>Team</th><th>Depot</th><th class="r">Jobs</th><th class="r">Revenue</th><th class="r">Profit</th><th class="r">Margin</th><th class="r">Customers</th><th></th></tr></thead>
+      <tbody>${t.map(x => `<tr style="cursor:pointer" onclick="openTeamBreakdown('${String(x.id).replace(/'/g, "\\'")}')" title="Click to see the full account-level breakdown for this team"><td>${x.name}</td><td>${x.depot||'\u2014'}</td><td class="r">${fNum(x.total_jobs)}</td><td class="r">${fGBP(x.total_revenue)}</td><td class="r">${fGBP(x.total_profit)}</td><td class="r"><span class="${mPill(x.margin_pct)}">${fPct(x.margin_pct)}</span></td><td class="r">${x.customers.length}</td><td class="r" style="color:#3b82f6;font-weight:600;white-space:nowrap">Breakdown &rarr;</td></tr>`).join('')}</tbody></table>
     </div></div>
     ${t.map(team => `
       <div class="card">
@@ -1767,6 +1768,284 @@ function renderTeams(el) {
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fGBP(ctx.raw) } } }
     }
   }));
+}
+
+// ── TEAM ACCOUNT BREAKDOWN (drill-down) ──
+let _tbdTeamId = null;
+let _tbdSortField = 'revenue';
+let _tbdSortDir = 'desc';
+
+// Build per-account rows for a team, joining job aggregates + quote conversion (respects active filter)
+function buildTeamAccountRows(team) {
+  const custByName = {};
+  (DATA.customers || []).forEach(c => { custByName[c.customer_name] = c; });
+
+  const qByNorm = {};
+  (typeof buildQuoteCustomerData === 'function' ? buildQuoteCustomerData() : []).forEach(q => {
+    qByNorm[normaliseQName(q.customerName)] = q;
+  });
+
+  return (team.customers || []).map(name => {
+    const c = custByName[name] || { total_jobs: 0, total_revenue: 0, total_cost: 0, total_profit: 0, weeks_active: 0 };
+    const q = qByNorm[normaliseQName(name)] || null;
+    const jobs = Number(c.total_jobs) || 0;
+    const revenue = Number(c.total_revenue) || 0;
+    const cost = Number(c.total_cost) || 0;
+    const profit = Number(c.total_profit) || 0;
+    return {
+      account: name,
+      jobs, revenue, cost, profit,
+      marginPct: revenue > 0 ? (profit / revenue * 100) : 0,
+      avgRevPerJob: jobs > 0 ? revenue / jobs : 0,
+      avgProfitPerJob: jobs > 0 ? profit / jobs : 0,
+      weeksActive: Number(c.weeks_active) || 0,
+      totalQuotes: q ? q.totalQuotes : 0,
+      converted: q ? q.convertedCount : 0,
+      nonConverted: q ? q.nonConvertedCount : 0,
+      cancelled: q ? q.cancelledCount : 0,
+      conversionRate: q ? q.conversionRate : null,
+      convertedRevenue: q ? q.convertedRevenue : 0,
+      nonConvertedRevenue: q ? q.nonConvertedRevenue : 0,
+      hasQuotes: !!q
+    };
+  });
+}
+
+function sortTeamBreakdown(field) {
+  if (_tbdSortField === field) { _tbdSortDir = _tbdSortDir === 'desc' ? 'asc' : 'desc'; }
+  else { _tbdSortField = field; _tbdSortDir = field === 'account' ? 'asc' : 'desc'; }
+  const team = (DATA.teams || []).find(t => String(t.id) === String(_tbdTeamId));
+  if (team) renderTeamBreakdown(team);
+}
+
+function openTeamBreakdown(teamId) {
+  const team = (DATA.teams || []).find(t => String(t.id) === String(teamId));
+  if (!team) { toast('Team not found', true); return; }
+  _tbdTeamId = teamId;
+  _tbdSortField = 'revenue';
+  _tbdSortDir = 'desc';
+  let overlay = document.getElementById('tbd-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'tbd-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#0f172a;z-index:9999;overflow-y:auto;display:none';
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeTeamBreakdown(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { const o = document.getElementById('tbd-overlay'); if (o && o.style.display === 'block') closeTeamBreakdown(); }
+    });
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+  renderTeamBreakdown(team);
+}
+
+function closeTeamBreakdown() {
+  const overlay = document.getElementById('tbd-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.body.style.overflow = '';
+  _tbdTeamId = null;
+}
+
+function renderTeamBreakdown(team) {
+  const overlay = document.getElementById('tbd-overlay');
+  if (!overlay) return;
+  const rows = buildTeamAccountRows(team);
+
+  const dir = _tbdSortDir === 'desc' ? -1 : 1;
+  rows.sort((a, b) => {
+    let av = a[_tbdSortField], bv = b[_tbdSortField];
+    if (av == null) av = -1;
+    if (bv == null) bv = -1;
+    if (typeof av === 'string') return _tbdSortDir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
+    return (av - bv) * dir;
+  });
+
+  const tJobs = rows.reduce((s, r) => s + r.jobs, 0);
+  const tRev = rows.reduce((s, r) => s + r.revenue, 0);
+  const tCost = rows.reduce((s, r) => s + r.cost, 0);
+  const tProfit = rows.reduce((s, r) => s + r.profit, 0);
+  const tMargin = tRev > 0 ? (tProfit / tRev * 100) : 0;
+  const tConv = rows.reduce((s, r) => s + r.converted, 0);
+  const tNC = rows.reduce((s, r) => s + r.nonConverted, 0);
+  const tCanc = rows.reduce((s, r) => s + r.cancelled, 0);
+  const tQuotes = tConv + tNC + tCanc;
+  const tConvRate = tQuotes > 0 ? (tConv / tQuotes * 100) : 0;
+  const anyQuotes = rows.some(r => r.hasQuotes);
+
+  const depotLabel = selectedDepot === 'both' ? 'All depots' : (selectedDepot.charAt(0).toUpperCase() + selectedDepot.slice(1) + ' depot');
+  const wl = (DATA.weeks || []).map(w => w.week_label).sort();
+  const fwk = (typeof fWk === 'function') ? fWk : (x => x);
+  const rangeLabel = wl.length ? (fwk(wl[0]) + ' → ' + fwk(wl[wl.length - 1])) : 'All weeks';
+  const gbp2 = (typeof fGBP2 === 'function') ? fGBP2 : (x => fGBP(Math.round(x)));
+
+  const arrow = f => _tbdSortField === f ? (_tbdSortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const th = (label, f, right) => '<th class="' + (right ? 'r' : '') + '" style="cursor:pointer;white-space:nowrap" onclick="sortTeamBreakdown(\'' + f + '\')">' + label + arrow(f) + '</th>';
+
+  overlay.innerHTML = `
+    <div style="max-width:1400px;margin:0 auto;padding:24px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:16px;flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0;font-size:20px;color:#e2e8f0">${team.name}${String(team.id).startsWith('_cs_') ? ' <span style="font-size:10px;background:#475569;color:#94a3b8;padding:2px 6px;border-radius:4px;font-weight:400;vertical-align:middle">AUTO</span>' : ''} — Account Breakdown</h2>
+          <div style="font-size:12px;color:#64748b;margin-top:4px">${depotLabel} · ${rangeLabel} · ${rows.length} accounts</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="exportTeamBreakdown('${String(team.id).replace(/'/g, "\\'")}')" style="background:#065f46;border:1px solid #047857;color:#d1fae5;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">⬇ Export to Excel (.xlsx)</button>
+          <button onclick="closeTeamBreakdown()" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px">Close</button>
+        </div>
+      </div>
+
+      <div class="kpi-row" style="margin:16px 0;display:flex;gap:12px;flex-wrap:wrap">
+        <div class="kpi" style="flex:1;min-width:120px"><div class="label">Accounts</div><div class="value">${fNum(rows.length)}</div></div>
+        <div class="kpi" style="flex:1;min-width:120px"><div class="label">Jobs</div><div class="value">${fNum(tJobs)}</div></div>
+        <div class="kpi" style="flex:1;min-width:120px"><div class="label">Revenue</div><div class="value">${fGBP(Math.round(tRev))}</div></div>
+        <div class="kpi" style="flex:1;min-width:120px"><div class="label">Profit</div><div class="value">${fGBP(Math.round(tProfit))}</div></div>
+        <div class="kpi" style="flex:1;min-width:120px"><div class="label">Margin</div><div class="value"><span class="${mPill(tMargin)}">${tMargin.toFixed(1)}%</span></div></div>
+        ${anyQuotes ? '<div class="kpi" style="flex:1;min-width:120px"><div class="label">Quote Conversion</div><div class="value">' + tConvRate.toFixed(1) + '%</div><div class="label">' + fNum(tConv) + ' / ' + fNum(tQuotes) + '</div></div>' : ''}
+      </div>
+
+      <div class="card" style="padding:0">
+        <div style="max-height:calc(100vh - 280px);overflow:auto">
+          <table>
+            <thead><tr>
+              ${th('Account', 'account', false)}
+              ${th('Jobs', 'jobs', true)}
+              ${th('Revenue', 'revenue', true)}
+              ${th('Cost', 'cost', true)}
+              ${th('Profit', 'profit', true)}
+              ${th('Margin', 'marginPct', true)}
+              ${th('Avg £/Job', 'avgRevPerJob', true)}
+              ${th('Weeks', 'weeksActive', true)}
+              ${th('Quotes', 'totalQuotes', true)}
+              ${th('Conv', 'converted', true)}
+              ${th('Non-Conv', 'nonConverted', true)}
+              ${th('Canc', 'cancelled', true)}
+              ${th('Conv %', 'conversionRate', true)}
+            </tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr>
+                <td>${r.account}</td>
+                <td class="r">${fNum(r.jobs)}</td>
+                <td class="r">${fGBP(Math.round(r.revenue))}</td>
+                <td class="r">${fGBP(Math.round(r.cost))}</td>
+                <td class="r">${fGBP(Math.round(r.profit))}</td>
+                <td class="r"><span class="${mPill(r.marginPct)}">${r.marginPct.toFixed(1)}%</span></td>
+                <td class="r">${gbp2(r.avgRevPerJob)}</td>
+                <td class="r">${fNum(r.weeksActive)}</td>
+                <td class="r">${r.hasQuotes ? fNum(r.totalQuotes) : '—'}</td>
+                <td class="r">${r.hasQuotes ? fNum(r.converted) : '—'}</td>
+                <td class="r">${r.hasQuotes ? fNum(r.nonConverted) : '—'}</td>
+                <td class="r">${r.hasQuotes ? fNum(r.cancelled) : '—'}</td>
+                <td class="r">${r.conversionRate != null ? '<span class="' + (r.conversionRate >= 60 ? 'pill pg' : r.conversionRate >= 40 ? 'pill pa' : 'pill pr') + '">' + r.conversionRate.toFixed(0) + '%</span>' : '—'}</td>
+              </tr>`).join('')}
+              <tr style="font-weight:700;border-top:2px solid #334155">
+                <td>Total</td>
+                <td class="r">${fNum(tJobs)}</td>
+                <td class="r">${fGBP(Math.round(tRev))}</td>
+                <td class="r">${fGBP(Math.round(tCost))}</td>
+                <td class="r">${fGBP(Math.round(tProfit))}</td>
+                <td class="r">${tMargin.toFixed(1)}%</td>
+                <td class="r">—</td>
+                <td class="r">—</td>
+                <td class="r">${anyQuotes ? fNum(tQuotes) : '—'}</td>
+                <td class="r">${anyQuotes ? fNum(tConv) : '—'}</td>
+                <td class="r">${anyQuotes ? fNum(tNC) : '—'}</td>
+                <td class="r">${anyQuotes ? fNum(tCanc) : '—'}</td>
+                <td class="r">${anyQuotes ? tConvRate.toFixed(0) + '%' : '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      ${!anyQuotes ? '<p style="font-size:12px;color:#64748b;margin-top:12px">No quote data matched these accounts for the selected filter. Upload quote files in Admin to populate conversion metrics.</p>' : ''}
+      <p style="font-size:12px;color:#64748b;margin-top:12px">Tip: click any column header to re-sort. The Excel export includes this account summary plus the underlying raw job rows and quote records for the current filter, so you can re-slice the data yourself.</p>
+    </div>`;
+}
+
+// ── Excel export of a team's raw + summary data (respects the active filter) ──
+function exportTeamBreakdown(teamId) {
+  const team = (DATA.teams || []).find(t => String(t.id) === String(teamId));
+  if (!team) { toast('Team not found', true); return; }
+  if (typeof XLSX === 'undefined') { toast('Excel library not loaded', true); return; }
+
+  const depotActive = selectedDepot !== 'both';
+  const depotMatch = d => !depotActive || d === selectedDepot;
+  const validWeeks = new Set((DATA.weeks || []).map(w => w.week_label));
+
+  const aliasMap = {};
+  (ALL_DATA.customerAliases || []).forEach(a => { aliasMap[a.alias_name] = a.canonical_name; });
+  const teamCanon = new Set(team.customers || []);
+  const teamNorm = new Set((team.customers || []).map(normaliseQName));
+
+  // Sheet 1 — Account Summary (aggregated per account)
+  const summary = buildTeamAccountRows(team)
+    .sort((a, b) => b.revenue - a.revenue)
+    .map(r => ({
+      Account: r.account,
+      Jobs: r.jobs,
+      Revenue: Math.round(r.revenue * 100) / 100,
+      Cost: Math.round(r.cost * 100) / 100,
+      Profit: Math.round(r.profit * 100) / 100,
+      'Margin %': Math.round(r.marginPct * 10) / 10,
+      'Avg Revenue/Job': Math.round(r.avgRevPerJob * 100) / 100,
+      'Avg Profit/Job': Math.round(r.avgProfitPerJob * 100) / 100,
+      'Weeks Active': r.weeksActive,
+      'Total Quotes': r.hasQuotes ? r.totalQuotes : '',
+      Converted: r.hasQuotes ? r.converted : '',
+      'Non-Converted': r.hasQuotes ? r.nonConverted : '',
+      Cancelled: r.hasQuotes ? r.cancelled : '',
+      'Conversion %': r.conversionRate != null ? Math.round(r.conversionRate * 10) / 10 : '',
+      'Converted Revenue': r.hasQuotes ? Math.round(r.convertedRevenue * 100) / 100 : '',
+      'Non-Converted Revenue': r.hasQuotes ? Math.round(r.nonConvertedRevenue * 100) / 100 : ''
+    }));
+
+  // Sheet 2 — Raw Jobs (every underlying job row for this team's accounts, current filter)
+  const rawJobs = (ALL_DATA.rawJobs || [])
+    .filter(j => validWeeks.has(j.week_label) && depotMatch(j.depot) && teamCanon.has(aliasMap[j.customer_name] || j.customer_name))
+    .map(j => ({
+      'Week': j.week_label, 'Job No': j.job_no, 'Customer': j.customer_name,
+      'Canonical Account': aliasMap[j.customer_name] || j.customer_name,
+      'Sales': j.sales_name, 'Depot': j.depot,
+      'Revenue': Number(j.revenue || 0), 'Cost': Number(j.cost || 0), 'Profit': Number(j.profit || 0),
+      'Vehicle': j.vehicle, 'Supplier': j.supplier || '', 'Call Sign': j.call_sign || '',
+      'Collection PC': j.collection_postcode, 'Delivery PC': j.delivery_postcode,
+      'Ready At': j.ready_at, 'Booked At': j.booked_at, 'Delivery Deadline': j.delivery_deadline,
+      'POB': j.pob_time, 'POD': j.pod_time
+    }));
+
+  // Sheet 3 — Quote records for this team's accounts (current filter)
+  const quoteRows = [];
+  if (quoteData) {
+    const inWeek = q => !q.week_label || validWeeks.has(q.week_label);
+    (quoteData.converted || []).filter(q => depotMatch(q.depot) && inWeek(q) && teamNorm.has(normaliseQName(q.customer_name))).forEach(q => quoteRows.push({
+      Status: 'Converted', 'Customer': q.customer_name, 'Sales': q.sales_name, 'Created On': q.quote_created_on,
+      'Value': Number(q.income || 0), 'Ref': q.our_ref || '', 'Tariff': q.tariff || '',
+      'Issued By': q.quote_issued_by || '', 'Converted By': q.quote_converted_by || '', 'Depot': q.depot, 'Week': q.week_label, 'Reason': ''
+    }));
+    (quoteData.nonConverted || []).filter(q => depotMatch(q.depot) && inWeek(q) && teamNorm.has(normaliseQName(q.customer_name))).forEach(q => quoteRows.push({
+      Status: 'Non-Converted', 'Customer': q.customer_name, 'Sales': q.sales_name, 'Created On': q.quote_created_on,
+      'Value': Number(q.income || 0), 'Ref': q.quote_no || '', 'Tariff': q.tariff || '',
+      'Issued By': q.quote_issued_by || '', 'Converted By': '', 'Depot': q.depot, 'Week': q.week_label, 'Reason': ''
+    }));
+    (quoteData.cancelled || []).filter(q => depotMatch(q.depot) && inWeek(q) && teamNorm.has(normaliseQName(q.customer_name))).forEach(q => quoteRows.push({
+      Status: 'Cancelled', 'Customer': q.customer_name, 'Sales': '', 'Created On': q.cancellation_date,
+      'Value': Number(q.value || 0), 'Ref': q.our_ref || '', 'Tariff': '',
+      'Issued By': '', 'Converted By': '', 'Depot': q.depot, 'Week': q.week_label, 'Reason': (q.reason_code || '') + (q.cancellation_reason ? ' — ' + q.cancellation_reason : '')
+    }));
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary.length ? summary : [{ Account: 'No accounts for this filter' }]), 'Account Summary');
+  if (rawJobs.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rawJobs), 'Raw Jobs');
+  if (quoteRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(quoteRows), 'Quotes');
+
+  const depotSlug = selectedDepot === 'both' ? 'all' : selectedDepot;
+  const wl = (DATA.weeks || []).map(w => w.week_label).sort();
+  const rangeSlug = wl.length ? (wl[0] + '_' + wl[wl.length - 1]) : 'all';
+  const teamSlug = String(team.name || 'team').toLowerCase().replace(/[^a-z0-9]+/g, '-').substring(0, 30);
+  const filename = 'cal-team-' + teamSlug + '-' + depotSlug + '-' + rangeSlug + '.xlsx';
+  XLSX.writeFile(wb, filename);
+  if (typeof toast === 'function') toast('Exported ' + summary.length + ' accounts · ' + rawJobs.length + ' job rows · ' + quoteRows.length + ' quotes');
 }
 
 // ── SUPPLIERS ──

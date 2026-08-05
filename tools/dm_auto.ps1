@@ -282,7 +282,10 @@ function Invoke-DmReport {
         [Parameter(Mandatory)][datetime]$To
     )
 
-    $before = @(Get-ChildItem (Join-Path $Script:ReportsRoot $Report.Folder) -File -ErrorAction SilentlyContinue |
+    # Watch the whole Reports tree, not just the folder we expect. Delivery
+    # Master's output folder names do not always match the tile name, and a
+    # wrong guess would otherwise look like a timeout.
+    $before = @(Get-ChildItem $Script:ReportsRoot -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -notlike '~$*' } | Select-Object -ExpandProperty FullName)
 
     $tab = Find-Element -Root $Window -Name 'Reports' -ControlType TabItem

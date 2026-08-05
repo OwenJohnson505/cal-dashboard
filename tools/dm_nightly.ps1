@@ -21,7 +21,7 @@
 [CmdletBinding()]
 param(
     [datetime]$Date = (Get-Date).Date.AddDays(-1),
-    [string[]]$Profile = @('CalNorth', 'CalSafe'),
+    [string[]]$Profile = @('CalNorth', 'CalSouth'),
     [string]$MailTo = 'owen@cal.delivery',
     [switch]$SkipEmail,
     [switch]$SkipIngest,

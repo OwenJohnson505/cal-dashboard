@@ -21,16 +21,17 @@ Both profiles are needed — they have different passwords.
 ```powershell
 cd C:\Users\jowen\Repos\cal-dashboard\tools
 .\dm_auto.ps1 -StoreCredential CalNorth
-.\dm_auto.ps1 -StoreCredential CalSafe
+.\dm_auto.ps1 -StoreCredential CalSouth
 ```
 
 Each prompts with the standard Windows credential dialog. The password goes
 straight into **Windows Credential Manager** under `DeliveryMaster/CalNorth` and
-`DeliveryMaster/CalSafe`. It is never printed, logged, or written to a file, and
+`DeliveryMaster/CalSouth`. It is never printed, logged, or written to a file, and
 never appears on a command line.
 
-`CalNorth` maps to the login dropdown entry **"Customer Default"**; `CalSafe`
-maps to **"CalSafe"**. If those display names are wrong, fix
+`CalNorth` maps to the dropdown entry **"Default"** and `CalSouth` to **"Cal South"**.
+The dropdown has exactly four entries, read off the live control: **Default**,
+**Cal Manchester**, **Cal Runcorn**, **Cal South**. There is no "CalSafe". If those display names are wrong, fix
 `$Script:ProfileDisplayName` at the top of `dm_auto.ps1`.
 
 You can also add them through the Credential Manager GUI, but the target name
@@ -66,7 +67,7 @@ currently assumes the headings visible in the UI (`Booking Issues`,
 ## Running it
 
 ```powershell
-.\dm_auto.ps1 -Run -Profile CalNorth,CalSafe          # exports only, yesterday
+.\dm_auto.ps1 -Run -Profile CalNorth,CalSouth          # exports only, yesterday
 .\dm_auto.ps1 -Run -Profile CalNorth -From 2026-08-01 -To 2026-08-01
 .\dm_nightly.ps1 -SkipEmail                           # export + ingest, no email
 .\dm_nightly.ps1                                      # the full nightly run

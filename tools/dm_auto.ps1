@@ -17,7 +17,7 @@
 .EXAMPLE
   # One-time, per profile. Prompts securely; nothing is echoed.
   .\dm_auto.ps1 -StoreCredential CalNorth
-  .\dm_auto.ps1 -StoreCredential CalSafe
+  .\dm_auto.ps1 -StoreCredential CalSouth
 
 .EXAMPLE
   # Dump the UI tree so report tiles and their Process buttons can be mapped.
@@ -25,12 +25,12 @@
 
 .EXAMPLE
   # Run yesterday's reports for both profiles.
-  .\dm_auto.ps1 -Run -Profile CalNorth,CalSafe
+  .\dm_auto.ps1 -Run -Profile CalNorth,CalSouth
 #>
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(ParameterSetName = 'Store', Mandatory)]
-    [ValidateSet('CalNorth', 'CalSafe')]
+    [ValidateSet('CalNorth', 'CalSouth', 'CalManchester', 'CalRuncorn')]
     [string]$StoreCredential,
 
     [Parameter(ParameterSetName = 'Discover', Mandatory)]
@@ -41,8 +41,8 @@ param(
 
     [Parameter(ParameterSetName = 'Discover')]
     [Parameter(ParameterSetName = 'Run')]
-    [ValidateSet('CalNorth', 'CalSafe')]
-    [string[]]$Profile = @('CalNorth', 'CalSafe'),
+    [ValidateSet('CalNorth', 'CalSouth', 'CalManchester', 'CalRuncorn')]
+    [string[]]$Profile = @('CalNorth', 'CalSouth'),
 
     # Defaults to yesterday, which is what the nightly run wants.
     [Parameter(ParameterSetName = 'Run')]
@@ -59,11 +59,15 @@ $Script:ExePath      = 'C:\Program Files (x86)\Delivery Master\Delivery Master\D
 $Script:ReportsRoot  = 'C:\Program Files (x86)\Delivery Master\Delivery Master\Reports'
 $Script:LogPath      = Join-Path $PSScriptRoot 'dm_auto.log'
 
-# The dropdown on the login screen shows a display name that differs from the
-# short name we use everywhere else.
+# Short name -> the label shown in the login screen's connection dropdown.
+# Read directly off the live control on 2026-08-05; the dropdown has exactly
+# these four entries and nothing else. 'Default' is the North business - the
+# window title reads "Cal (North)" once signed in on it.
 $Script:ProfileDisplayName = @{
-    CalNorth = 'Customer Default'
-    CalSafe  = 'CalSafe'
+    CalNorth      = 'Default'
+    CalSouth      = 'Cal South'
+    CalManchester = 'Cal Manchester'
+    CalRuncorn    = 'Cal Runcorn'
 }
 
 # Reports to run each night. 'Group' is the ribbon button, 'Tile' is the heading
@@ -223,6 +227,44 @@ function Set-ElementValue {
 #endregion
 
 #region Login ------------------------------------------------------------------
+function Select-Connection {
+    <#
+      The connection dropdown's ListItems are all named after their bound class
+      ("DeliveryMaster.CustomerConnection"); the visible label lives in a child
+      Text element. So searching the dropdown by name finds the *label*, which is
+      not selectable. Match on the child text, then select the owning ListItem.
+    #>
+    param([Parameter(Mandatory)]$Combo, [Parameter(Mandatory)][string]$Display)
+
+    $expand = $Combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    Start-Sleep -Milliseconds 700
+    try {
+        $items = @($Combo.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                  (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))))
+        $textCond = New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+
+        $found = $null
+        $seen  = @()
+        foreach ($it in $items) {
+            $labels = @($it.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCond) |
+                        ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+            $seen += $labels
+            if ($labels -contains $Display) { $found = $it; break }
+        }
+        if (-not $found) {
+            throw "Connection '$Display' is not in the dropdown. Available: $($seen -join ', ')"
+        }
+        $found.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        Start-Sleep -Milliseconds 500
+        Write-Log "Selected connection '$Display'"
+    }
+    catch {
+        try { $expand.Collapse() } catch { }
+        throw
+    }
+}
+
 function Connect-DeliveryMaster {
     param([Parameter(Mandatory)][string]$ProfileName)
 
@@ -243,14 +285,7 @@ function Connect-DeliveryMaster {
 
     $combo = Find-Element -Root $win -AutomationId 'cmbConnections'
     if ($combo) {
-        $display = $Script:ProfileDisplayName[$ProfileName]
-        $expand = $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-        $expand.Expand(); Start-Sleep -Milliseconds 400
-        $item = Find-Element -Root $combo -Name $display -TimeoutSec 8
-        if (-not $item) { $expand.Collapse(); throw "Profile '$display' not found in the connection dropdown." }
-        Invoke-Element $item
-        Start-Sleep -Milliseconds 400
-        Write-Log "Selected connection '$display'"
+        Select-Connection -Combo $combo -Display $Script:ProfileDisplayName[$ProfileName]
     }
 
     $u = Find-Element -Root $win -AutomationId 'txtUserName'

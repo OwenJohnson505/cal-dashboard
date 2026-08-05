@@ -362,10 +362,6 @@ try { localStorage.setItem('_test', '1'); localStorage.removeItem('_test'); _sto
 const sbAuth = window.supabase.createClient(SB_URL, SB_KEY, _storageAvailable ? {} : {
   auth: { persistSession: false, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } }
 });
-// Second client for admin user creation (so it doesn't affect the admin's session)
-const sbAuthAdmin = window.supabase.createClient(SB_URL, SB_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
-});
 let currentSession = null;  // Supabase auth session
 let currentProfile = null;  // user_profiles row { depot, role, display_name }
 
@@ -5530,25 +5526,15 @@ async function saveNewUser() {
   if (!password || password.length < 6) { toast('Password must be at least 6 characters', true); return; }
 
   try {
-    // Step 1: Create the auth user via Supabase's proper signup flow
-    // Uses a separate client so it doesn't affect the admin's session
-    const { data: signUpData, error: signUpError } = await sbAuthAdmin.auth.signUp({
-      email,
-      password,
-      options: { data: { display_name: name || email } }
-    });
-    if (signUpError) throw signUpError;
-    if (!signUpData.user) throw new Error('Signup returned no user — check if email confirmation is disabled in Supabase settings');
-
-    const newUserId = signUpData.user.id;
-
-    // Step 2: Create the profile via SECURITY DEFINER RPC (bypasses RLS)
-    await callRpc('admin_create_profile', {
-      target_user_id: newUserId,
-      target_email: email,
-      target_depot: depot,
-      target_role: role,
-      target_display_name: name || email
+    // Creates the auth user, its identity and the profile in one admin-only RPC.
+    // Deliberately not auth.signUp(): that is the public signup endpoint, which
+    // must stay disabled so strangers cannot self-register.
+    await callRpc('admin_create_user', {
+      new_email: email,
+      new_password: password,
+      new_depot: depot,
+      new_role: role,
+      new_display_name: name || email
     });
 
     toast('User created: ' + email);

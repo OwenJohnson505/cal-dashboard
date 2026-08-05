@@ -49,7 +49,19 @@ param(
     [datetime]$From = (Get-Date).Date.AddDays(-1),
 
     [Parameter(ParameterSetName = 'Run')]
-    [datetime]$To = (Get-Date).Date.AddDays(-1)
+    [datetime]$To = (Get-Date).Date.AddDays(-1),
+
+    # Run only these tiles, for testing a single report without the whole plan.
+    [Parameter(ParameterSetName = 'Run')]
+    [string[]]$Only,
+
+    # A report that never produces a file must not stall the whole night.
+    [Parameter(ParameterSetName = 'Run')]
+    [int]$ReportTimeoutMin = 4,
+
+    # Hard stop for the entire run, so an unattended job cannot run until morning.
+    [Parameter(ParameterSetName = 'Run')]
+    [int]$MaxRunMin = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,17 +83,38 @@ $Script:ProfileDisplayName = @{
 }
 
 # Reports to run each night. 'Group' is the ribbon button, 'Tile' is the heading
-# above the Process button, 'Folder' is where the export lands under Reports\.
+# above the Process button.
+#
+# This is deliberately NOT every tile in the app. Excluded on purpose:
+#   * Document producers - Customer Invoice, Credit Note, Proforma, Driver
+#     Invoice/Remittance/Self Bill, Delivery Note, CMR, Manifest, labels, RAMS.
+#     These generate real financial or operational paperwork, not analysis.
+#   * Email senders - Email POD.
+#   * Accounting exports - Xero / Sage / QuickBooks. These typically mark records
+#     as exported, which would corrupt the real accounts workflow.
+#   * Single-customer reports - Wincanton, Calea, HSS, DHL, Fedex, Millers,
+#     Alternergy, Skipton, Octopus. Add individually if wanted.
+# Everything below is a read-only data export.
 $Script:ReportPlan = @(
-    @{ Group = 'Booking Reports'; Tile = 'Booking Issues';             Folder = 'BookingIssues' }
-    @{ Group = 'Booking Reports'; Tile = 'Response Time';              Folder = 'ResponseTime' }
-    @{ Group = 'Booking Reports'; Tile = 'Productivity Summary Report'; Folder = 'ProductivitySummary' }
-    @{ Group = 'Booking Reports'; Tile = 'Driver Allocation by User';  Folder = 'DriverAllocatorProfitReport' }
-    @{ Group = 'Booking Reports'; Tile = 'Consignment Log';            Folder = 'ConsignmentLog' }
-    @{ Group = 'Booking Reports'; Tile = 'User Login';                 Folder = 'UserProductivity' }
-    @{ Group = 'Driver Reports';  Tile = 'Driver List';                Folder = 'DriverList' }
-    @{ Group = 'Customer Reports'; Tile = 'Customer List';             Folder = 'CustomerList' }
+    # VERIFIED end to end against the live app on 2026-08-06: each of these
+    # writes a spreadsheet into Reports\ without further prompting.
+    @{ Group = 'Booking Reports';  Tile = 'Booking Issues' }
+    @{ Group = 'Booking Reports';  Tile = 'Response Time' }
+    @{ Group = 'Booking Reports';  Tile = 'Productivity Summary Report' }
+    @{ Group = 'Booking Reports';  Tile = 'Driver Allocation by User' }
+    @{ Group = 'Booking Reports';  Tile = 'Consignment Log' }
 )
+
+# Tried and NOT working yet - deliberately left out of the nightly run so it
+# does not spend an hour failing. Each opens fine but never writes a file, or
+# presents a differently shaped dialog:
+#   Booking Reports  : User Login, Quote Conversion, Non-Converted Quotes,
+#                      Cancelled Bookings, Gross Margin, Customer Data
+#   Driver Reports   : Driver List (no Search Criteria dialog at all)
+#   Customer Reports : Customer List
+#   Account Reports  : Aged Debtors (no Export button), Dashboard Report
+# Likely cause: these render to a preview/Save-As path rather than writing
+# straight to Reports\. Needs watching by hand once to see what they actually do.
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'INFO')
@@ -227,6 +260,106 @@ function Set-ElementValue {
 #endregion
 
 #region Login ------------------------------------------------------------------
+function Set-DatePicker {
+    <#
+      Sets one of the Search Criteria date boxes. Tries the known automation IDs
+      first, then falls back to any DatePicker-classed element in document order,
+      since a few dialogs name theirs differently. Returns $true on success.
+    #>
+    param(
+        [Parameter(Mandatory)]$Dialog,
+        [Parameter(Mandatory)][string[]]$Ids,
+        [Parameter(Mandatory)][datetime]$Date
+    )
+    foreach ($id in $Ids) {
+        $el = $Dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+              (New-Object System.Windows.Automation.PropertyCondition($UIA::AutomationIdProperty, $id)))
+        if (-not $el) { continue }
+        try {
+            $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            if ($vp.Current.IsReadOnly) { continue }
+            $vp.SetValue($Date.ToString('dd-MM-yyyy'))
+            Start-Sleep -Milliseconds 250
+            return $true
+        }
+        catch { }
+    }
+    return $false
+}
+
+function Resolve-ReportTypeDialog {
+    <#
+      Several reports interrupt with a "Report Type" modal (PDF / Excel, then
+      Continue) before the Search Criteria dialog appears - and for a few it
+      appears again after Export. Always choose Excel: the whole pipeline parses
+      spreadsheets, and a PDF export would land a file we cannot read.
+      Returns $true if a dialog was handled.
+    #>
+    param([int]$TimeoutSec = 6)
+    $dlg = Find-DmDialog -Title 'Report Type' -TimeoutSec $TimeoutSec
+    if (-not $dlg) { return $false }
+    $excel = $dlg.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+             (New-Object System.Windows.Automation.PropertyCondition($UIA::AutomationIdProperty, 'rbtnExcel')))
+    if ($excel) {
+        try { $excel.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch { }
+        Start-Sleep -Milliseconds 250
+    }
+    $ok = $dlg.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+          (New-Object System.Windows.Automation.PropertyCondition($UIA::AutomationIdProperty, 'btnOK')))
+    if (-not $ok) { throw 'Report Type dialog has no Continue button.' }
+    Invoke-Element $ok
+    Write-Log 'Report Type: chose Excel'
+    Start-Sleep -Milliseconds 800
+    return $true
+}
+
+function Find-DmDialog {
+    <#
+      The Search Criteria dialog is its own top-level window owned by the app,
+      not a descendant of the main window, so it has to be found from the desktop
+      root filtered to the Delivery Master process.
+    #>
+    param([Parameter(Mandatory)][string]$Title, [int]$TimeoutSec = 30)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $proc = Get-Process DeliveryMaster -ErrorAction SilentlyContinue
+        if ($proc) {
+            $hit = $UIA::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) |
+                   Where-Object { $_.Current.ProcessId -eq $proc.Id -and $_.Current.Name -eq $Title } |
+                   Select-Object -First 1
+            if ($hit) { return $hit }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
+}
+
+function Wait-DmState {
+    <#
+      Returns @{State='Login'|'Shell'; Window=<element>} once the app has
+      positively rendered one or the other. Both markers are checked on a fresh
+      window handle each pass, because the window we get immediately after launch
+      is not necessarily the one that ends up hosting the login form.
+    #>
+    param([int]$TimeoutSec = 90)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $win = $null
+        try { $win = Get-DmWindow -TimeoutSec 5 } catch { }
+        if ($win) {
+            $login = $win.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+                     (New-Object System.Windows.Automation.PropertyCondition($UIA::AutomationIdProperty, 'btnLogin')))
+            if ($login) { return @{ State = 'Login'; Window = $win } }
+            # tbReport is the Reports ribbon tab - only present once authenticated.
+            $shell = $win.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+                     (New-Object System.Windows.Automation.PropertyCondition($UIA::AutomationIdProperty, 'tbReport')))
+            if ($shell) { return @{ State = 'Shell'; Window = $win } }
+        }
+        Start-Sleep -Milliseconds 700
+    }
+    throw "Delivery Master showed neither the login screen nor the main shell within $TimeoutSec seconds."
+}
+
 function Select-Connection {
     <#
       The connection dropdown's ListItems are all named after their bound class
@@ -272,14 +405,16 @@ function Connect-DeliveryMaster {
         Write-Log "Launching Delivery Master for $ProfileName"
         Start-Process $Script:ExePath | Out-Null
     }
-    $win = Get-DmWindow
-
-    # Already signed in? The login screen has btnLogin; the main shell does not.
-    $loginBtn = Find-Element -Root $win -AutomationId 'btnLogin' -TimeoutSec 8
-    if (-not $loginBtn) {
+    # Do NOT infer "signed in" from the absence of the login button: straight
+    # after launch the window exists but nothing is rendered yet, so that test
+    # silently reports a live session while sitting on the login screen. Poll
+    # until one of the two states positively identifies itself.
+    $state = Wait-DmState -TimeoutSec 90
+    if ($state.State -eq 'Shell') {
         Write-Log "Session already active for $ProfileName"
-        return $win
+        return $state.Window
     }
+    $win = $state.Window
 
     $cred = Get-DmCredential -ProfileName $ProfileName
 
@@ -288,23 +423,31 @@ function Connect-DeliveryMaster {
         Select-Connection -Combo $combo -Display $Script:ProfileDisplayName[$ProfileName]
     }
 
-    $u = Find-Element -Root $win -AutomationId 'txtUserName'
-    $p = Find-Element -Root $win -AutomationId 'txtPassword'
+    # Re-acquire the window: expanding the connection dropdown re-templates part
+    # of the login form, which invalidates element handles taken before it.
+    $win = Get-DmWindow
+    $u = Find-Element -Root $win -AutomationId 'txtUserName' -TimeoutSec 20
+    $p = Find-Element -Root $win -AutomationId 'txtPassword' -TimeoutSec 20
+    if (-not $u -or -not $p) { throw "Login fields not found for $ProfileName after selecting the connection." }
     Set-ElementValue -Element $u -Value $cred.UserName
     Set-ElementValue -Element $p -Value $cred.Password
     $cred = $null
 
+    $loginBtn = Find-Element -Root $win -AutomationId 'btnLogin' -TimeoutSec 20
+    if (-not $loginBtn) { throw "Login button vanished for $ProfileName." }
     Invoke-Element $loginBtn
     Write-Log "Signed in as $($ProfileName)"
 
-    # Wait for the shell: the login button disappears once authenticated.
-    $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $deadline) {
-        if (-not (Find-Element -Root (Get-DmWindow) -AutomationId 'btnLogin' -TimeoutSec 2)) { return Get-DmWindow }
-        Start-Sleep -Seconds 1
-    }
-    $err = Find-Element -Root (Get-DmWindow) -AutomationId 'lblError' -TimeoutSec 2
-    throw "Login did not complete for $ProfileName. $(if ($err) { $err.Current.Name })"
+    # Wait for the ribbon to appear rather than for the login button to vanish -
+    # a rejected password leaves the form up with lblError populated.
+    try {
+        $after = Wait-DmState -TimeoutSec 90
+        if ($after.State -eq 'Shell') { return $after.Window }
+    } catch { }
+
+    $err = Find-Element -Root (Get-DmWindow) -AutomationId 'lblError' -TimeoutSec 3
+    $msg = if ($err -and $err.Current.Name) { $err.Current.Name } else { 'no error message shown' }
+    throw "Login failed for $ProfileName ($($Script:ProfileDisplayName[$ProfileName])): $msg"
 }
 #endregion
 
@@ -314,7 +457,8 @@ function Invoke-DmReport {
         [Parameter(Mandatory)]$Window,
         [Parameter(Mandatory)][hashtable]$Report,
         [Parameter(Mandatory)][datetime]$From,
-        [Parameter(Mandatory)][datetime]$To
+        [Parameter(Mandatory)][datetime]$To,
+        [int]$TimeoutMin = 4
     )
 
     # Watch the whole Reports tree, not just the folder we expect. Delivery
@@ -339,7 +483,10 @@ function Invoke-DmReport {
     Invoke-Element $process
     Write-Log "Opened '$($Report.Tile)'"
 
-    $dialog = Find-Element -Root (Get-DmWindow) -Name 'Search Criteria' -TimeoutSec 25
+    # Some reports ask for PDF/Excel before showing the criteria dialog.
+    [void](Resolve-ReportTypeDialog -TimeoutSec 6)
+
+    $dialog = Find-DmDialog -Title 'Search Criteria' -TimeoutSec 30
     if (-not $dialog) { throw "Search Criteria dialog did not open for '$($Report.Tile)'." }
     Start-Sleep -Milliseconds 600
 
@@ -350,19 +497,16 @@ function Invoke-DmReport {
         if ($t.Current.ToggleState -ne 'On') { $t.Toggle() }
     }
 
-    # Dates, via ValuePattern - typing does not work on these controls.
-    $edits = @($dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-              (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))))
-    $dateEdits = @($edits | Where-Object { $_.Current.Name -match 'From|To' -or $_.Current.AutomationId -match 'From|To|Date' })
-    if ($dateEdits.Count -lt 2) { $dateEdits = $edits }   # fall back to positional
-    if ($dateEdits.Count -ge 2) {
-        try {
-            Set-ElementValue -Element $dateEdits[0] -Value $From.ToString('dd-MM-yyyy')
-            Set-ElementValue -Element $dateEdits[1] -Value $To.ToString('dd-MM-yyyy')
-            Write-Log ("Date range {0} to {1}" -f $From.ToString('dd-MM-yyyy'), $To.ToString('dd-MM-yyyy'))
-        } catch {
-            Write-Log "Could not set dates on '$($Report.Tile)' ($_). Using the dialog default." 'WARN'
-        }
+    # Dates. Target the DatePicker itself (dDateFrom / dDateTo), NOT the Edit
+    # descendant - the inner PART_TextBox is read-only, and typing into it does
+    # nothing. The DatePicker exposes a writable ValuePattern taking dd-MM-yyyy.
+    $setFrom = Set-DatePicker -Dialog $dialog -Ids @('dDateFrom', 'dtpFrom', 'dpFrom') -Date $From
+    $setTo   = Set-DatePicker -Dialog $dialog -Ids @('dDateTo',   'dtpTo',   'dpTo')   -Date $To
+    if ($setFrom -and $setTo) {
+        Write-Log ("Date range {0} to {1}" -f $From.ToString('dd-MM-yyyy'), $To.ToString('dd-MM-yyyy'))
+    }
+    else {
+        Write-Log "Could not set both dates on '$($Report.Tile)' - using the dialog default range." 'WARN'
     }
 
     $export = Find-Element -Root $dialog -Name 'Export' -ControlType Button
@@ -370,20 +514,24 @@ function Invoke-DmReport {
     Invoke-Element $export
     Write-Log "Exporting '$($Report.Tile)'..."
 
+    # ...and some ask only after Export is pressed.
+    [void](Resolve-ReportTypeDialog -TimeoutSec 6)
+
     # Wait for a new file rather than a fixed sleep - run times vary wildly.
-    $deadline = (Get-Date).AddMinutes(10)
+    $deadline = (Get-Date).AddMinutes($TimeoutMin)
     while ((Get-Date) -lt $deadline) {
-        $now = @(Get-ChildItem (Join-Path $Script:ReportsRoot $Report.Folder) -File -ErrorAction SilentlyContinue |
+        # Must mirror the $before snapshot exactly - same root, same recursion.
+        $now = @(Get-ChildItem $Script:ReportsRoot -Recurse -File -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -notlike '~$*' } | Select-Object -ExpandProperty FullName)
-        $new = $now | Where-Object { $_ -notin $before }
-        if ($new) {
+        $new = @($now | Where-Object { $_ -notin $before })
+        if ($new.Count) {
             Start-Sleep -Seconds 2   # let the write settle
             Write-Log "Wrote $(Split-Path $new[0] -Leaf)"
             return $new[0]
         }
         Start-Sleep -Seconds 3
     }
-    throw "'$($Report.Tile)' produced no file within 10 minutes."
+    throw "'$($Report.Tile)' produced no file within $TimeoutMin minutes."
 }
 #endregion
 
@@ -428,15 +576,23 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'Run' {
-        Write-Log "=== nightly run: $($From.ToString('yyyy-MM-dd')) to $($To.ToString('yyyy-MM-dd')) ==="
+        $plan = if ($Only) { @($Script:ReportPlan | Where-Object { $Only -contains $_.Tile }) } else { $Script:ReportPlan }
+        if (-not $plan) { throw "No reports matched -Only: $($Only -join ', ')" }
+        Write-Log "=== run: $($From.ToString('yyyy-MM-dd')) to $($To.ToString('yyyy-MM-dd')), $(@($plan).Count) report(s) x $($Profile.Count) profile(s) ==="
         $ok = 0; $failed = @()
+        $runDeadline = (Get-Date).AddMinutes($MaxRunMin)
         foreach ($pf in $Profile) {
-            foreach ($r in $Script:ReportPlan) {
+            foreach ($r in $plan) {
                 try {
                     # Delivery Master closes itself after ~15 min idle, so re-establish
                     # the session before every report rather than assuming it survived.
+                    if ((Get-Date) -gt $runDeadline) {
+                        Write-Log "Overall run limit of $MaxRunMin min reached - skipping the rest." 'WARN'
+                        $failed += "$pf / $($r.Tile) (skipped: run limit)"
+                        continue
+                    }
                     $win = Connect-DeliveryMaster -ProfileName $pf
-                    Invoke-DmReport -Window $win -Report $r -From $From -To $To | Out-Null
+                    Invoke-DmReport -Window $win -Report $r -From $From -To $To -TimeoutMin $ReportTimeoutMin | Out-Null
                     $ok++
                 }
                 catch {

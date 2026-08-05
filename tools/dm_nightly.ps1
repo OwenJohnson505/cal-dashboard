@@ -16,7 +16,7 @@
 .EXAMPLE
   .\dm_nightly.ps1                      # run it now, for yesterday
   .\dm_nightly.ps1 -SkipEmail           # run without emailing
-  .\dm_nightly.ps1 -RegisterSchedule    # install the 10pm nightly task
+  .\dm_nightly.ps1 -RegisterSchedule    # install the 1am nightly task
 #>
 [CmdletBinding()]
 param(
@@ -44,18 +44,23 @@ if ($RegisterSchedule) {
     # a desktop to drive anyway.
     $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
                -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $here 'dm_nightly.ps1')`""
-    $trigger = New-ScheduledTaskTrigger -Daily -At 22:00
+    $trigger = New-ScheduledTaskTrigger -Daily -At 01:00
     $set     = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun `
                -ExecutionTimeLimit (New-TimeSpan -Hours 3) -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName 'Cal - Delivery Master nightly reports' `
         -Action $action -Trigger $trigger -Settings $set -Description 'Export DM reports, ingest to Supabase, email summary.' -Force | Out-Null
-    Log 'Registered scheduled task "Cal - Delivery Master nightly reports" for 22:00 daily.'
+    Log 'Registered scheduled task "Cal - Delivery Master nightly reports" for 01:00 daily.'
     return
 }
 
 Log "=== nightly start, date $($Date.ToString('yyyy-MM-dd')), profiles: $($Profile -join ', ') ==="
 $started  = Get-Date
 $problems = @()
+
+# Delivery Master opens every export in Excel. Left alone that is one Excel
+# process per report per night, forever. Record what was already open so only
+# the ones this run spawned get closed afterwards - never Owen's own workbooks.
+$excelBefore = @(Get-Process EXCEL -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 
 # 1. Export -------------------------------------------------------------------
 try {
@@ -110,6 +115,18 @@ if (-not $SkipEmail) {
         Log "Emailed $MailTo with $($new.Count) attachment(s)."
     }
     catch { Log "Email step failed: $_" 'ERROR' }
+}
+
+# Close only the Excel windows this run opened.
+$excelAfter = @(Get-Process EXCEL -ErrorAction SilentlyContinue | Where-Object { $_.Id -notin $excelBefore })
+if ($excelAfter) {
+    foreach ($x in $excelAfter) {
+        try { $null = $x.CloseMainWindow() } catch { }
+    }
+    Start-Sleep -Seconds 5
+    $stubborn = @(Get-Process EXCEL -ErrorAction SilentlyContinue | Where-Object { $_.Id -in $excelAfter.Id })
+    foreach ($x in $stubborn) { try { Stop-Process -Id $x.Id -Force -ErrorAction SilentlyContinue } catch { } }
+    Log "Closed $($excelAfter.Count) Excel window(s) opened by this run."
 }
 
 Log "=== nightly end ($(if ($problems) { 'with problems' } else { 'clean' })) ==="

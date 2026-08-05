@@ -73,7 +73,7 @@ currently assumes the headings visible in the UI (`Booking Issues`,
 .\dm_nightly.ps1                                      # the full nightly run
 ```
 
-Install the 10pm schedule **only once a manual run has worked end to end**:
+Install the 1am schedule **only once a manual run has worked end to end**:
 
 ```powershell
 .\dm_nightly.ps1 -RegisterSchedule

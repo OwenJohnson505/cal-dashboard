@@ -599,6 +599,15 @@ function render(){
           <td class="num"><b>${A.funnel.rate.toFixed(1)}%</b></td>
           <td class="muted">converted ÷ all three</td></tr>
       </tbody></table></div>
+    ${A.funnel.lostCa/Math.max(A.funnel.total,1) < 0.12 ? `<div class="note" style="border-left:4px solid var(--critical)">
+      <b>This rate is not trustworthy.</b> Cancellations are only
+      ${(A.funnel.lostCa/A.funnel.total*100).toFixed(1)}% of quotes here. A like-for-like export from
+      Delivery Master with <b>"Include Auto Archived Quotations"</b> ticked returns roughly
+      <b>30%</b> — that checkbox defaults to OFF, so the loaded history is missing most cancelled
+      quotes. Measured on July 2026 Cal North: 67 cancellations in this database against 944 in a
+      fresh export, which moves conversion from about 53% to <b>36.9%</b>.
+      Until the cancelled history is re-uploaded with that box ticked, treat every conversion figure
+      on this page as roughly <b>16 points too high</b>.</div>` : ''}
     <div class="note"><b>Read this before comparing to anything else.</b> The true rate is
       <b>${A.funnel.rate.toFixed(1)}%</b>. Leaving cancellations out gives
       ${A.funnel.rateTwoFile.toFixed(1)}% — flattering by

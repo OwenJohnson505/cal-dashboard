@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quotes — dashboard concept</title>
+<style>
+:root{
+  color-scheme: light;
+  --surface-1:#fcfcfb; --plane:#f9f9f7; --sunk:#f2f1ed;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s8:#e34948;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --good-text:#006300;
+}
+@media (prefers-color-scheme: dark){ :root:where(:not([data-theme="light"])){
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d; --sunk:#232322;
+  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s8:#e66767; --good-text:#0ca30c; } }
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d; --sunk:#232322;
+  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s8:#e66767; --good-text:#0ca30c; }
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 80px}
+h1{font-size:21px;margin:0 0 2px;letter-spacing:-.01em}
+h2{font-size:15px;margin:0 0 3px;letter-spacing:-.005em}
+h3{font-size:12px;margin:18px 0 7px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.sub{color:var(--ink-2);font-size:13px}
+.muted{color:var(--muted)}
+.card{background:var(--surface-1);border:1px solid var(--ring);border-radius:14px;padding:20px 22px;margin-bottom:16px}
+.grid{display:grid;gap:16px}
+@media(min-width:880px){ .two{grid-template-columns:1fr 1fr} .three{grid-template-columns:1fr 1fr 1fr} }
+.hero{display:flex;gap:36px;flex-wrap:wrap;align-items:flex-end;margin:8px 0 4px}
+.fig{font-size:38px;font-weight:640;letter-spacing:-.02em;line-height:1}
+.lab{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.delta{font-size:13.5px;font-weight:600;margin-top:4px}
+.up{color:var(--good-text)} .down{color:var(--critical)}
+.chip{display:inline-flex;align-items:center;font-size:11.5px;font-weight:600;padding:3px 9px;
+  border-radius:999px;border:1px solid var(--ring);white-space:nowrap}
+.chip.good{color:var(--good-text)} .chip.warning{color:#8a5b00}
+.chip.serious{color:#a5451f} .chip.critical{color:var(--critical)} .chip.flat{color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;
+  letter-spacing:.05em;padding:0 10px 8px 0;border-bottom:1px solid var(--grid)}
+td{padding:9px 10px 9px 0;border-bottom:1px solid var(--grid);vertical-align:middle}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+.scroll{overflow-x:auto}
+.note{background:var(--sunk);border-radius:10px;padding:13px 15px;font-size:13px;color:var(--ink-2);margin:10px 0}
+.note b{color:var(--ink)}
+.note.alert{border-left:4px solid var(--critical)}
+.bar{height:9px;border-radius:5px;background:var(--grid);overflow:hidden;min-width:80px;display:flex}
+.bar i{display:block;height:100%}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin-top:9px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.quad{display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--grid);border-radius:10px;overflow:hidden}
+.quad div{background:var(--surface-1);padding:14px 16px}
+.quad .t{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.quad .v{font-size:26px;font-weight:640;margin:4px 0 2px;letter-spacing:-.01em}
+.quad .d{font-size:12.5px;color:var(--ink-2)}
+.banner{background:var(--sunk);border-left:4px solid var(--s1);border-radius:0 10px 10px 0;
+  padding:16px 20px;margin-bottom:18px}
+.banner p{margin:.4em 0;font-size:15.5px;line-height:1.55}
+svg{display:block;max-width:100%}
+.foot{color:var(--muted);font-size:12px;margin-top:10px}
+.tag{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  border:1px solid var(--ring);border-radius:5px;padding:2px 6px;margin-left:8px;vertical-align:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+  <h1>Quotes</h1><span class="tag">design concept</span>
+</div>
+<p class="sub" style="margin:0 0 20px">July 2026 · Cal North · figures are real unless marked
+  <span class="tag">illustrative</span></p>
+
+<!-- ============ 1. THE VERDICT ============ -->
+<div class="banner">
+  <p><strong>You convert 36.9% of quotes.</strong> Not 53% — the dashboard was missing 93% of
+  cancellations. Of the 63% you don't win, most aren't refused, they just go quiet.</p>
+  <p class="sub">The bigger finding: <strong>a third of all quotes go out at exactly the tariff price.</strong>
+  For those, the outcome is the rate card's doing, not the person's.</p>
+</div>
+
+<div class="card">
+  <div class="hero">
+    <div><div class="lab">Conversion</div><div class="fig">36.9%</div>
+      <div class="delta down">−16.1 pts vs what we reported before</div></div>
+    <div><div class="lab">Quotes</div><div class="fig">3,039</div>
+      <div class="delta muted">1,122 won · 973 open · 944 cancelled</div></div>
+    <div><div class="lab">Value lost</div><div class="fig">£1.36m</div>
+      <div class="delta muted">open + cancelled</div></div>
+    <div><div class="lab">Priced at tariff</div><div class="fig">34%</div>
+      <div class="delta muted">no human pricing decision</div></div>
+  </div>
+  <div class="note alert"><b>Data health:</b> cancellations are only loaded when
+    “Include Auto Archived Quotations” is ticked on export, and it defaults to off. July shows
+    <b>67 in the database against 944 in a fresh export</b>. Until the history is reloaded,
+    every conversion figure outside this page is roughly 16 points too high.</div>
+</div>
+
+<!-- ============ 2. WHOSE FAULT — TARIFF OR PERSON ============ -->
+<div class="card">
+  <h2>Was it the price, or the person?</h2>
+  <p class="sub">Every quote is compared with its customer's own rate card:
+    <span class="muted">base + (miles − included) × rate per mile</span>.
+    That splits quotes into ones where somebody made a decision and ones where they didn't.</p>
+
+  <div class="quad" style="margin-top:14px">
+    <div>
+      <div class="t">At tariff · won</div>
+      <div class="v" style="color:var(--good-text)">28%</div>
+      <div class="d">The rate card did its job. No credit or blame to the desk.</div>
+    </div>
+    <div>
+      <div class="t">At tariff · lost</div>
+      <div class="v" style="color:var(--critical)">72%</div>
+      <div class="d"><b>This is a rate-card problem.</b> Nobody intervened and we still lost it.
+        Chasing the person here is unfair.</div>
+    </div>
+    <div>
+      <div class="t">Adjusted up · won</div>
+      <div class="v" style="color:var(--good-text)">41%</div>
+      <div class="d">Priced above tariff and still won — margin the tariff was leaving behind.</div>
+    </div>
+    <div>
+      <div class="t">Adjusted down · lost</div>
+      <div class="v" style="color:var(--critical)">19%</div>
+      <div class="d">Discounted and <em>still</em> lost. The worst outcome: margin given away for nothing.</div>
+    </div>
+  </div>
+  <p class="foot"><span class="tag">illustrative</span> The split is the design; the percentages need the
+    full pricing run. What is already measured: 34% of quotes reproduce the tariff price to the penny,
+    and the median quote sits +1.7% from tariff — so the model is unbiased and the spread is real
+    pricing behaviour, not noise.</p>
+</div>
+
+<!-- ============ 3. RATE CARD HEALTH ============ -->
+<div class="card">
+  <h2>Rate cards that are losing you work</h2>
+  <p class="sub">Where quotes go out at tariff and still lose, the tariff is the problem.
+    Ranked by lost value, so it reads as a pricing review list.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Tariff</th><th class="num">Quotes</th><th class="num">At tariff</th>
+      <th class="num">Conversion</th><th class="num">Value lost</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Small Van</td><td class="num">1,642</td><td class="num">61%</td>
+        <td class="num">41%</td><td class="num">£214k</td>
+        <td><span class="chip serious">review the rate</span></td></tr>
+      <tr><td>LWB</td><td class="num">1,400</td><td class="num">54%</td>
+        <td class="num">44%</td><td class="num">£187k</td>
+        <td><span class="chip warning">watch</span></td></tr>
+      <tr><td>Luton</td><td class="num">878</td><td class="num">38%</td>
+        <td class="num">49%</td><td class="num">£142k</td>
+        <td><span class="chip flat">priced by people</span></td></tr>
+      <tr><td>7.5T</td><td class="num">537</td><td class="num">72%</td>
+        <td class="num">31%</td><td class="num">£131k</td>
+        <td><span class="chip critical">rate card is wrong</span></td></tr>
+      <tr><td>Small Van Regional</td><td class="num">416</td><td class="num">83%</td>
+        <td class="num">38%</td><td class="num">£58k</td>
+        <td><span class="chip critical">rate card is wrong</span></td></tr>
+    </tbody>
+  </table></div>
+  <p class="foot"><span class="tag">illustrative</span> "At tariff" is the share nobody adjusted.
+    High at-tariff plus low conversion is the signature of a rate card that is out of the market —
+    the desk is doing what it was told and losing anyway. <b>"Luton" alone has eight different rate
+    cards</b> ranging £90–£140 base, which is worth a look on its own.</p>
+</div>
+
+<!-- ============ 4. PEOPLE ============ -->
+<div class="card">
+  <h2>The desk</h2>
+  <p class="sub">Conversion is compared with what each person's <em>own</em> quotes would convert at for
+    everyone else — their customers, their quote sizes. Then we ask how often they actually priced.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Person</th><th class="num">Quotes</th><th class="num">Actual</th>
+      <th class="num">Expected</th><th class="num">Gap</th><th>Meaningful?</th>
+      <th class="num">Priced at tariff</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr><td>Katie Atkin</td><td class="num">1,283</td><td class="num">72.8%</td><td class="num">60.6%</td>
+        <td class="num up">+12.2</td><td><span class="chip good">clearly real</span></td>
+        <td class="num">22%</td><td class="sub">Beats an easy book by a lot, and prices most of it herself.</td></tr>
+      <tr><td>Steven Selfe</td><td class="num">1,591</td><td class="num">62.4%</td><td class="num">51.6%</td>
+        <td class="num up">+10.8</td><td><span class="chip good">clearly real</span></td>
+        <td class="num">31%</td><td class="sub">Hardest book on the desk. Raw rate badly undersells him.</td></tr>
+      <tr><td>Sophie Blakeley</td><td class="num">1,262</td><td class="num">66.0%</td><td class="num">59.9%</td>
+        <td class="num up">+6.1</td><td><span class="chip good">clearly real</span></td>
+        <td class="num">44%</td><td class="sub">Solid.</td></tr>
+      <tr><td>Aylesh Hall</td><td class="num">1,189</td><td class="num">66.4%</td><td class="num">63.2%</td>
+        <td class="num up">+3.3</td><td><span class="chip warning">probably real</span></td>
+        <td class="num">58%</td><td class="sub">Ahead, but takes the tariff more often than most.</td></tr>
+      <tr><td>Jamie Chambers</td><td class="num">1,218</td><td class="num">57.9%</td><td class="num">57.9%</td>
+        <td class="num">0.0</td><td><span class="chip flat">within noise</span></td>
+        <td class="num">51%</td><td class="sub">Exactly par. Nothing to discuss.</td></tr>
+      <tr><td>Kyle Speakman</td><td class="num">1,720</td><td class="num">51.3%</td><td class="num">53.4%</td>
+        <td class="num down">−2.1</td><td><span class="chip flat">within noise</span></td>
+        <td class="num">29%</td><td class="sub">Hard book, roughly par. Low raw rate is the hand, not the player.</td></tr>
+      <tr><td>Isla Batchelor</td><td class="num">126</td><td class="num">55.6%</td><td class="num">62.9%</td>
+        <td class="num down">−7.3</td><td><span class="chip warning">probably real</span></td>
+        <td class="num">67%</td><td class="sub">Too few quotes to be sure. Watch, don't act.</td></tr>
+      <tr><td>Alex A</td><td class="num">274</td><td class="num">48.2%</td><td class="num">58.6%</td>
+        <td class="num down">−10.4</td><td><span class="chip serious">clearly real</span></td>
+        <td class="num">76%</td><td class="sub">Book is easier than average. Takes the tariff on 3 in 4 — little pricing happening.</td></tr>
+      <tr><td>Max Boardman</td><td class="num">623</td><td class="num">49.8%</td><td class="num">63.2%</td>
+        <td class="num down">−13.4</td><td><span class="chip critical">clearly real</span></td>
+        <td class="num">35%</td><td class="sub">Easiest book on the desk, worst result. Prices actively — and it isn't working.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="foot">Actual, expected, gap and significance are <b>measured</b>. "Priced at tariff"
+    is <span class="tag">illustrative</span> pending the full pricing run — but it is the column that
+    decides whether a gap is a coaching conversation or a rate-card one. Alex at 76% and Max at 35% are
+    the same number of points apart from expected, and would need completely different conversations.</p>
+</div>
+
+<!-- ============ 5. WHERE THE MONEY IS ============ -->
+<div class="grid two">
+  <div class="card">
+    <h2>Big quotes are where you lose</h2>
+    <p class="sub">Conversion falls steadily with quote size — and the money doesn't.</p>
+    <table>
+      <thead><tr><th>Quote value</th><th class="num">Quotes</th><th class="num">Converts</th><th class="num">Value lost</th></tr></thead>
+      <tbody>
+        <tr><td>under £50</td><td class="num">585</td><td class="num">78.1%</td><td class="num">£5k</td></tr>
+        <tr><td>£50–100</td><td class="num">2,546</td><td class="num">68.8%</td><td class="num">£57k</td></tr>
+        <tr><td>£100–250</td><td class="num">3,647</td><td class="num">63.1%</td><td class="num">£222k</td></tr>
+        <tr><td>£250–500</td><td class="num">2,415</td><td class="num">54.7%</td><td class="num">£386k</td></tr>
+        <tr><td><b>£500+</b></td><td class="num"><b>1,045</b></td><td class="num down"><b>40.7%</b></td>
+          <td class="num down"><b>£468k</b></td></tr>
+      </tbody>
+    </table>
+    <p class="foot">£468k of lost quote value sits in the 500+ band alone — 34% of everything lost,
+      from 8% of the quotes. If one thing gets attention, it is this row.</p>
+  </div>
+
+  <div class="card">
+    <h2>Why bookings get cancelled</h2>
+    <p class="sub">944 cancellations in July. Nearly a third have no reason recorded.</p>
+    <table>
+      <thead><tr><th>Reason</th><th class="num">Count</th><th></th><th class="num">Value</th></tr></thead>
+      <tbody>
+        <tr><td>RC3</td><td class="num">226</td>
+          <td><div class="bar"><i style="width:34%;background:var(--s1)"></i></div></td><td class="num">£80k</td></tr>
+        <tr><td>Non-Compliant</td><td class="num">192</td>
+          <td><div class="bar"><i style="width:29%;background:var(--critical)"></i></div></td><td class="num">£59k</td></tr>
+        <tr><td>RC1</td><td class="num">90</td>
+          <td><div class="bar"><i style="width:14%;background:var(--s1)"></i></div></td><td class="num">£38k</td></tr>
+        <tr><td>RC4</td><td class="num">84</td>
+          <td><div class="bar"><i style="width:13%;background:var(--s1)"></i></div></td><td class="num">£30k</td></tr>
+        <tr><td>RC2</td><td class="num">60</td>
+          <td><div class="bar"><i style="width:9%;background:var(--s1)"></i></div></td><td class="num">£14k</td></tr>
+        <tr><td>RC5</td><td class="num">6</td>
+          <td><div class="bar"><i style="width:1%;background:var(--s1)"></i></div></td><td class="num">£3k</td></tr>
+      </tbody>
+    </table>
+    <p class="foot"><b>“Non-Compliant” means no code was entered.</b> 192 cancellations worth £59k with
+      no recorded reason — you cannot fix a cause you never wrote down. That is a process fix, not a
+      data one.</p>
+  </div>
+</div>
+
+<!-- ============ 6. HOW IT SITS ON THE DASHBOARD ============ -->
+<div class="card">
+  <h2>How this fits the main dashboard</h2>
+  <p class="sub">Three levels, so the front page stays readable and the depth is one click away.</p>
+  <div class="grid three" style="margin-top:12px">
+    <div style="background:var(--sunk);border-radius:10px;padding:15px 17px">
+      <h3 style="margin-top:0">1 · Front page</h3>
+      <p class="sub">One line in the weekly verdict: <em>“Conversion 36.9%, down 2 pts. A third of
+      quotes went out at tariff — 7.5T and Small Van Regional are losing at the rate card.”</em>
+      Plus the £500+ band as a single tile.</p>
+    </div>
+    <div style="background:var(--sunk);border-radius:10px;padding:15px 17px">
+      <h3 style="margin-top:0">2 · Quotes tab</h3>
+      <p class="sub">Everything on this page: the funnel, the price-or-person split, rate-card health,
+      the desk table, value bands and cancellation reasons.</p>
+    </div>
+    <div style="background:var(--sunk);border-radius:10px;padding:15px 17px">
+      <h3 style="margin-top:0">3 · Drill-down</h3>
+      <p class="sub">Click a person or a tariff for the quote-level list — customer, distance,
+      tariff price, quoted price, outcome — so a 1:1 has the actual examples in front of it.</p>
+    </div>
+  </div>
+</div>
+
+<p class="foot">Measured from July 2026 Cal North: 1,122 converted, 973 open, 944 cancelled (Q refs only);
+value bands and cancellation reasons from the loaded quote history; per-person expected values are
+leave-one-out on customer and quote size. Tariff rate cards scraped from Delivery Master System Setup —
+500 tariffs, 12,873 customer assignments. Pricing splits marked illustrative await the full run, which
+needs distance on lost quotes — available from the Quote screen, which carries collection and delivery
+postcodes.</p>
+
+</div>
+</body>
+</html>

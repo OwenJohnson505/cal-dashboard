@@ -353,28 +353,37 @@ function analyse(){
     if(q.won) P.wonVal+=q.v; else P.lostVal+=q.v; });
 
   const desk=Object.entries(pAgg).map(([name,P])=>{
-    let expSum=0, n=0, byCust=[];
+    /* Everything is computed on the JUDGED subset (quotes whose customer someone
+       else also quotes) so actual, expected, the headline gap and the per-customer
+       breakdown all share one basis and reconcile exactly. Per-customer rows use
+       the SAME customer × value-band expectation as the headline — not a separate
+       raw rate — so the drill's total row equals the headline gap. */
+    let expSum=0, n=0, wonJ=0; const cAcc={};
     qs.filter(q=>q.p===name).forEach(q=>{
       const c=cAgg[q.c], b=bAgg[q.band];
       const cw=c.w-P.cw[q.c].w, cn=c.n-P.cw[q.c].n;      // leave-one-out on customer
       if(cn<=0) return;                                   // only this person quotes them
       const cRate=cw/cn, bRate=b.n? b.w/b.n : overall;
       const e = inv(logit(cRate)+logit(bRate)-logit(overall)); // customer × value
-      expSum+=e; n++;
+      expSum+=e; n++; wonJ+=q.won;
+      const A=cAcc[q.c]=cAcc[q.c]||{w:0,e:0,n:0};
+      A.w+=q.won; A.e+=e; A.n++;
     });
-    Object.entries(P.cw).forEach(([c,o])=>{
-      const t=cAgg[c]; const ow=t.w-o.w, on=t.n-o.n;
-      if(on<=0||o.n<8) return;
-      byCust.push({c, n:o.n, actual:o.w/o.n*100, expected:ow/on*100,
-        gapQuotes:(o.w/o.n - ow/on)*o.n});
-    });
-    byCust.sort((a,b)=>a.gapQuotes-b.gapQuotes);
-    const actual = P.n? P.w/P.n*100 : 0;
+    const allCust=Object.entries(cAcc).map(([c,A])=>({c, n:A.n,
+      actual:A.w/A.n*100, expected:A.e/A.n*100, gapQuotes:A.w-A.e}))
+      .sort((a,b)=>a.gapQuotes-b.gapQuotes);
+    const byCust=allCust.filter(x=>x.n>=8).slice(0,6);
+    const shown=new Set(byCust.map(x=>x.c));
+    const rest=allCust.filter(x=>!shown.has(x.c));
+    const restRow=rest.length?{n:rest.reduce((s,x)=>s+x.n,0), custs:rest.length,
+      gapQuotes:rest.reduce((s,x)=>s+x.gapQuotes,0)}:null;
+    const actual = n? wonJ/n*100 : (P.n? P.w/P.n*100 : 0);
     const expected = n? expSum/n*100 : null;
     const gap = expected==null? null : actual-expected;
     const bands=Object.entries(P.bn).map(([b,c])=>({b,share:c/P.n*100}));
     return {name, quotes:P.n, actual, expected, gap, judged:n,
-      wonVal:P.wonVal, lostVal:P.lostVal, byCust:byCust.slice(0,6), bands,
+      wonJ, expWins:expSum, gapQ:wonJ-expSum,
+      wonVal:P.wonVal, lostVal:P.lostVal, byCust, restRow, bands,
       s: gap==null? null : sig(gap,n,actual/100)};
   }).filter(d=>d.quotes>=60).sort((a,b)=>(a.gap??99)-(b.gap??99));
 
@@ -815,30 +824,44 @@ function repDrill(r){
 function deskDrill(d){
   const worst=d.byCust.filter(c=>c.gapQuotes<0).slice(0,5);
   const bandRow=d.bands.sort((a,b)=>b.share-a.share).slice(0,5);
+  const q1=n=>(n>=0?'+':'−')+Math.abs(n).toFixed(1);
   return `
   <h3>What ${esc(d.name)}'s number is made of</h3>
   <p class="sub" style="margin-bottom:10px">${d.quotes.toLocaleString()} quotes, ${d.judged.toLocaleString()} of them
-    against customers others also quote. Won ${gbp(d.wonVal)}, lost ${gbp(d.lostVal)}.
-    ${d.s?`The ${pts(d.gap)} pt gap is <b>${d.s.label}</b> at this sample size.`:''}</p>
+    against customers others also quote — the judged part everything below is built on.
+    Won ${gbp(d.wonVal)}, lost ${gbp(d.lostVal)}.
+    ${d.gap!=null?`The <b>${pts(d.gap)} pt</b> gap means: they won <b>${d.wonJ}</b> of those
+    ${d.judged.toLocaleString()} where the mix they were given says <b>${Math.round(d.expWins)}</b> was par —
+    <b>${q1(d.gapQ)} quotes</b> vs par.`:''}
+    ${d.s?`That is <b>${d.s.label}</b> at this sample size.`:''}</p>
   <h3>Quote mix</h3>
   <div class="scroll"><table>
     <thead><tr><th>Value band</th><th class="num">Share of their quotes</th><th></th></tr></thead>
     <tbody>${bandRow.map(b=>`<tr><td>${b.b}</td><td class="num">${b.share.toFixed(0)}%</td>
       <td><div class="bar"><i style="width:${b.share.toFixed(0)}%;background:var(--s1)"></i></div></td></tr>`).join('')}</tbody>
   </table></div>
-  <h3>Where the gap sits</h3>
+  <h3>Where those ${q1(d.gapQ)} quotes sit</h3>
+  <p class="sub" style="margin-bottom:8px">The last column is <b>quotes won versus par</b>, not
+    percentage points — par being how that customer converts for everyone else, adjusted for quote
+    value. The rows add up to the headline: biggest accounts first, everything else rolled into one line.</p>
   <div class="scroll"><table>
     <thead><tr><th>Customer</th><th class="num">Quotes</th><th class="num">Their rate</th>
-    <th class="num">Everyone else</th><th class="num">Quotes lost vs expected</th></tr></thead>
+    <th class="num">Par</th><th class="num">Quotes vs par</th></tr></thead>
     <tbody>${d.byCust.map(c=>`<tr><td>${esc(c.c).slice(0,32)}</td><td class="num">${c.n}</td>
       <td class="num">${c.actual.toFixed(0)}%</td><td class="num">${c.expected.toFixed(0)}%</td>
-      <td class="num ${c.gapQuotes<0?'down':'up'}">${c.gapQuotes>=0?'+':''}${c.gapQuotes.toFixed(1)}</td></tr>`).join('')}</tbody>
+      <td class="num ${c.gapQuotes<0?'down':'up'}">${q1(c.gapQuotes)}</td></tr>`).join('')}
+    ${d.restRow?`<tr><td class="muted">Everything else (${d.restRow.custs} customers)</td>
+      <td class="num">${d.restRow.n}</td><td class="num">—</td><td class="num">—</td>
+      <td class="num ${d.restRow.gapQuotes<0?'down':'up'}">${q1(d.restRow.gapQuotes)}</td></tr>`:''}
+    <tr><td><b>Total — the headline gap</b></td><td class="num"><b>${d.judged}</b></td>
+      <td class="num"><b>${d.actual.toFixed(0)}%</b></td><td class="num"><b>${d.expected==null?'—':d.expected.toFixed(0)+'%'}</b></td>
+      <td class="num ${d.gapQ<0?'down':'up'}"><b>${q1(d.gapQ)}</b></td></tr></tbody>
   </table></div>
   <h3>Worth asking</h3>
   <ul class="ask">
-    ${worst.length?`<li>On <b>${esc(worst[0].c)}</b> you convert ${worst[0].actual.toFixed(0)}% where the desk
-      average is ${worst[0].expected.toFixed(0)}%, across ${worst[0].n} quotes. Is that pricing, response time,
-      or a relationship issue?</li>`:''}
+    ${worst.length?`<li>On <b>${esc(worst[0].c)}</b> you convert ${worst[0].actual.toFixed(0)}% where par is
+      ${worst[0].expected.toFixed(0)}%, across ${worst[0].n} quotes — ${Math.abs(worst[0].gapQuotes).toFixed(1)}
+      quotes. Is that pricing, response time, or a relationship issue?</li>`:''}
     ${d.bands.find(b=>b.b==='500+'&&b.share>20)?`<li>${d.bands.find(b=>b.b==='500+').share.toFixed(0)}% of their quotes
       are over £500, where the whole desk only converts ${A.bandTable[4].rate.toFixed(0)}%. A low raw rate is
       partly the hand they are dealt.</li>`:''}

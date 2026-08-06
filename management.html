@@ -159,6 +159,20 @@ const ISSUER_ALIAS = {
 };
 const issuer = n => ISSUER_ALIAS[String(n||'').trim()] || (String(n||'').trim()||'(unattributed)');
 
+/* Quote-pricing snapshot, precomputed by tools/build_quote_pricing.py from the
+   scraped quote grid + rate cards + Special Price lanes. Embedded rather than
+   live because the tariff tables only exist as scrapes, not in the database.
+   Regional-tariff quotes are counted but never priced: their pricing table's
+   column meanings are unconfirmed (vendor question open), and a guessed price
+   is worse than no price. Re-run the script after each scrape to refresh. */
+const PRICING = {
+  scraped:'2026-08-06', profile:'Cal North', n:300, unpriced_yet:1,
+  at:100, above:101, below:35, priced:235,
+  at_v:27155, above_v:31625, below_v:16372,
+  above_med:23, below_med:-31.75,
+  unpriceable:{regional:62, regional_v:9065, other:1, other_v:180, no_match:1, no_match_v:226}
+};
+
 async function fetchAll(path){
   const out=[]; let from=0; const size=1000;
   for(;;){
@@ -502,6 +516,60 @@ function gapBar(actual,expected,lo,hi){
   </svg>`;
 }
 
+/* The pricing snapshot card. Static by design — see the PRICING comment. */
+function pricingCard(){
+  const P=PRICING, u=P.unpriceable;
+  const excl=u.regional+u.other+u.no_match;
+  const covered=P.priced/(P.n-P.unpriced_yet)*100;
+  const seg=(n,c,label)=>`<div style="flex:${Math.max(n,1)};background:${c};min-width:34px;
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:600;
+    white-space:nowrap;overflow:hidden">${label}</div>`;
+  return `
+  <div class="card">
+    <h2>Quote pricing — the rate card or a judgement call?</h2>
+    <p class="sub">Every open quote priced against the tariff its customer is actually assigned
+      (matched customer-first, the only rule that comes out unbiased). Snapshot of the
+      ${P.profile} quote book, ${P.n} quotes, scraped ${P.scraped} — the depot filter above
+      does not apply to this card.</p>
+    <div class="hero">
+      <div><div class="lab">On the card</div><div class="fig">${(P.at/P.priced*100).toFixed(0)}%</div>
+        <div class="delta muted">${P.at} quotes · ${gbpk(P.at_v)}</div></div>
+      <div><div class="lab">Above the card</div><div class="fig">${(P.above/P.priced*100).toFixed(0)}%</div>
+        <div class="delta muted">${P.above} quotes · median +£${Math.round(P.above_med)}</div></div>
+      <div><div class="lab">Below the card</div><div class="fig">${(P.below/P.priced*100).toFixed(0)}%</div>
+        <div class="delta muted">${P.below} quotes · median −£${Math.abs(Math.round(P.below_med))}</div></div>
+      <div><div class="lab">Priceable</div><div class="fig">${covered.toFixed(0)}%</div>
+        <div class="delta muted">${P.priced} of ${P.n-P.unpriced_yet}</div></div>
+    </div>
+    <div style="display:flex;height:30px;border-radius:8px;overflow:hidden;gap:2px;margin:6px 0 4px">
+      ${seg(P.at,'var(--s3)',P.at)}
+      ${seg(P.above,'var(--s4)',P.above)}
+      ${seg(P.below,'var(--s2)',P.below)}
+      ${seg(excl,'var(--axis)',excl+' excluded')}
+    </div>
+    <div class="legend"><span><i style="background:var(--s3)"></i>Within 2% of the card</span>
+      <span><i style="background:var(--s4)"></i>Above it</span>
+      <span><i style="background:var(--s2)"></i>Below it</span>
+      <span><i style="background:var(--axis)"></i>Cannot be priced yet</span></div>
+    <div class="note"><b>"Above the card" is not proof anyone touched the price.</b> Drop charges,
+      waiting time, handballing and congestion are system rates that get baked into the quoted
+      figure, so a quote £18 over its card may be entirely automatic. Delivery Master stores the
+      flags that would settle it — a manual-price marker and a quote-amended marker — but exposes
+      neither; that is the top item on the vendor question list. Until then this card separates
+      <b>on-card</b> from <b>off-card</b>, not system from person. <b>Below the card</b> is the
+      cleaner signal: extras only push prices up, so under-card quotes are genuine discounts or
+      pricing errors — ${P.below} of them, ${gbpk(P.below_v)} of quoted value, median
+      −£${Math.abs(Math.round(P.below_med))} each.</div>
+    <div class="note"><b>What is excluded, and why.</b> ${u.regional} quotes
+      (${(u.regional/(P.n-P.unpriced_yet)*100).toFixed(0)}%, ${gbpk(u.regional_v)}) sit on the eight
+      Regional tariffs, which have no distance rate — they are priced from a region-to-region table
+      whose column meanings the vendor has not yet confirmed. Rather than guess, they are excluded
+      and shown grey. ${u.other+u.no_match} further quotes had no matching rate card. Quotes priced
+      from customer-specific postcode lanes (fixed lane prices) are included — those lanes were
+      validated against real jobs to the penny.</div>
+  </div>`;
+}
+
 /* ---------- render ---------- */
 function render(){
   A=analyse(); const K=cracks(A);
@@ -623,6 +691,8 @@ function render(){
       At ${(A.cancReasons.find(r=>r.code==='Non-Compliant')?.pct||0).toFixed(0)}% it is a process gap:
       that share of cancellations has no recorded reason to act on.</p>
   </div>
+
+  ${pricingCard()}
 
   <div class="card">
     <h2>Quote desk — conversion against the quotes they were given</h2>

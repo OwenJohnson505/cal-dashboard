@@ -1,0 +1,125 @@
+{
+ "scraped": "2026-08-06",
+ "profile": "Cal North",
+ "n": 300,
+ "unpriced_yet": 1,
+ "at": 100,
+ "above": 101,
+ "below": 34,
+ "at_v": 27155.0,
+ "above_v": 31625.0,
+ "below_v": 16372.0,
+ "unpriceable": {
+  "regional": 62,
+  "regional_v": 9065.0,
+  "other": 1,
+  "other_v": 180.0,
+  "no_match": 1,
+  "no_match_v": 226.0
+ },
+ "samples": {
+  "above": [
+   {
+    "ref": "Q28010",
+    "tariff": "Small Van JF",
+    "miles": 17.0,
+    "expected": 45.0,
+    "actual": 60.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28011",
+    "tariff": "Small Van JF",
+    "miles": 44.0,
+    "expected": 55.44,
+    "actual": 60.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28013",
+    "tariff": "40FT Trailer",
+    "miles": 538.0,
+    "expected": 1909.0,
+    "actual": 2195.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28016",
+    "tariff": "40FT Trailer",
+    "miles": 89.0,
+    "expected": 562.0,
+    "actual": 575.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28019",
+    "tariff": "Small Van",
+    "miles": 141.0,
+    "expected": 182.5,
+    "actual": 195.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28021",
+    "tariff": "7.5T SIG",
+    "miles": 74.0,
+    "expected": 362.0,
+    "actual": 395.0,
+    "via": "exact"
+   }
+  ],
+  "below": [
+   {
+    "ref": "Q28012",
+    "tariff": "Luton Tail Lift (JF)",
+    "miles": 294.0,
+    "expected": 617.46,
+    "actual": 595.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28038",
+    "tariff": "40FT Trailer",
+    "miles": 135.0,
+    "expected": 700.0,
+    "actual": 595.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28059",
+    "tariff": "SWB Lindab",
+    "miles": 192.0,
+    "expected": 244.68,
+    "actual": 230.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28070",
+    "tariff": "Small Van JF",
+    "miles": 89.0,
+    "expected": 107.64,
+    "actual": 105.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28086",
+    "tariff": "Small Van Wireless",
+    "miles": 351.0,
+    "expected": 392.6,
+    "actual": 295.0,
+    "via": "exact"
+   },
+   {
+    "ref": "Q28119",
+    "tariff": "LWB JF",
+    "miles": 190.0,
+    "expected": 275.1,
+    "actual": 245.0,
+    "via": "exact"
+   }
+  ]
+ },
+ "priced": 235,
+ "above_med": 23.0,
+ "below_med": -30.93
+}

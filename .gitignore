@@ -3,3 +3,5 @@ tools/dm_nightly.log
 tools/dm_tree_*.txt
 tools/tariffs_*.csv
 tools/dm_tariffs.log
+tools/quotes_*.csv
+tools/dm_quotes.log

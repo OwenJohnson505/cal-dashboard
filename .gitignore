@@ -1,3 +1,5 @@
 tools/dm_auto.log
 tools/dm_nightly.log
 tools/dm_tree_*.txt
+tools/tariffs_*.csv
+tools/dm_tariffs.log

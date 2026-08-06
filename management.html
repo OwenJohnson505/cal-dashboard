@@ -194,8 +194,8 @@ async function start(){
     const [jobs,conv,nonconv,canc,repAli,custAli] = await Promise.all([
       fetchAll('jobs?select=week_label,depot,customer_name,sales_name,revenue,cost,profit,vehicle,call_sign&week_label=gte.2026-W14&order=id'),
       fetchAll('converted_quotes?select=week_label,depot,customer_name,quote_issued_by,income,tariff&week_label=gte.2026-W14&order=id'),
-      fetchAll('non_converted_quotes?select=week_label,depot,customer_name,quote_issued_by,income,tariff&week_label=gte.2026-W14&order=id'),
-      fetchAll('cancelled_quotes?select=week_label,depot,customer_name,value,reason_code&week_label=gte.2026-W14&order=id'),
+      fetchAll('non_converted_quotes?select=week_label,depot,customer_name,quote_issued_by,income,tariff,quote_no&week_label=gte.2026-W14&order=id'),
+      fetchAll('cancelled_quotes?select=week_label,depot,customer_name,value,reason_code,our_ref&week_label=gte.2026-W14&order=id'),
       fetchAll('rep_aliases?select=alias_name,canonical_name'),
       fetchAll('customer_aliases?select=alias_name,canonical_name')
     ]);
@@ -357,6 +357,28 @@ function analyse(){
       s: gap==null? null : sig(gap,n,actual/100)};
   }).filter(d=>d.quotes>=60).sort((a,b)=>(a.gap??99)-(b.gap??99));
 
+  /* ---- COMPANY conversion across all THREE files ----
+     Only Q-prefixed cancellations are quote cancellations; BT refs are booking
+     cancellations and are not part of the quote funnel. 259 of the cancelled
+     rows also appear in the non-converted file, so they are counted once. */
+  const cancQ = RAW.canc.filter(keep).filter(r=>String(r.our_ref||'').startsWith('Q'));
+  const ncRefs = new Set(RAW.nonconv.filter(keep).map(r=>String(r.quote_no||'')));
+  const cancUnique = cancQ.filter(r=>!ncRefs.has(String(r.our_ref||'')));
+  const won = RAW.conv.filter(keep).length;
+  const lostNc = RAW.nonconv.filter(keep).length;
+  const lostCa = cancUnique.length;
+  const funnel = {
+    won, lostNc, lostCa, dupes: cancQ.length-cancUnique.length,
+    total: won+lostNc+lostCa,
+    rate: (won+lostNc+lostCa)? won/(won+lostNc+lostCa)*100 : 0,
+    rateTwoFile: (won+lostNc)? won/(won+lostNc)*100 : 0,
+    cancValue: cancQ.reduce((a,r)=>a+ +(r.value||0),0)
+  };
+  const cancReasons = Object.entries(cancQ.reduce((m,r)=>{
+      const k=r.reason_code||'(none)'; m[k]=m[k]||{n:0,v:0}; m[k].n++; m[k].v+= +(r.value||0); return m;},{}))
+    .map(([code,o])=>({code,n:o.n,v:o.v,pct:cancQ.length?o.n/cancQ.length*100:0}))
+    .sort((a,b)=>b.n-a.n);
+
   /* company value-band table for context */
   const bandTable=['under 50','50-100','100-250','250-500','500+'].map(b=>{
     const rows=qs.filter(q=>q.band===b);
@@ -383,7 +405,7 @@ function analyse(){
 
   const lossCur=wk(cur).filter(j=>+(j.profit||0)<0), lossPrev=wk(prev).filter(j=>+(j.profit||0)<0);
   return {weeks,cur,prev,series,C,P,bridge,movers,topMover,headline,underlying,
-    reps,desk,bandTable,mix,newC,atRisk,dep,
+    reps,desk,bandTable,mix,newC,atRisk,dep,funnel,cancReasons,
     lossCur, lossVal:lossCur.reduce((s,j)=>s+ +(j.profit||0),0),
     lossValP:lossPrev.reduce((s,j)=>s+ +(j.profit||0),0)};
 }
@@ -549,7 +571,48 @@ function render(){
   </div>
 
   <div class="card">
+    <h2>Quote conversion — the whole funnel</h2>
+    <p class="sub">All three reports. A quote either converts, is never taken up, or is booked and then
+      cancelled. Only Q-referenced cancellations belong here — BT refs are booking cancellations, not
+      quote outcomes.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Outcome</th><th class="num">Quotes</th><th class="num">Share</th><th>Source report</th></tr></thead>
+      <tbody>
+        <tr><td>Converted</td><td class="num">${A.funnel.won.toLocaleString()}</td>
+          <td class="num">${(A.funnel.won/A.funnel.total*100).toFixed(1)}%</td><td class="muted">Quote Conversion</td></tr>
+        <tr><td>Never taken up</td><td class="num">${A.funnel.lostNc.toLocaleString()}</td>
+          <td class="num">${(A.funnel.lostNc/A.funnel.total*100).toFixed(1)}%</td><td class="muted">Non-Converted Quotes</td></tr>
+        <tr><td>Booked then cancelled</td><td class="num">${A.funnel.lostCa.toLocaleString()}</td>
+          <td class="num">${(A.funnel.lostCa/A.funnel.total*100).toFixed(1)}%</td><td class="muted">Cancelled Bookings (Q refs)</td></tr>
+        <tr><td><b>Conversion rate</b></td><td class="num"><b>${A.funnel.total.toLocaleString()}</b></td>
+          <td class="num"><b>${A.funnel.rate.toFixed(1)}%</b></td>
+          <td class="muted">converted ÷ all three</td></tr>
+      </tbody></table></div>
+    <div class="note"><b>Read this before comparing to anything else.</b> The true rate is
+      <b>${A.funnel.rate.toFixed(1)}%</b>. Leaving cancellations out gives
+      ${A.funnel.rateTwoFile.toFixed(1)}% — flattering by
+      ${(A.funnel.rateTwoFile-A.funnel.rate).toFixed(1)} points.
+      ${A.funnel.dupes} cancelled quotes also appear in the non-converted file and are counted once,
+      not twice. Cancelled quotes are worth ${gbp(A.funnel.cancValue)}.</div>
+    <h3>Why bookings get cancelled</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Reason</th><th class="num">Count</th><th class="num">Share</th><th class="num">Value</th></tr></thead>
+      <tbody>${A.cancReasons.map(r=>`<tr><td>${esc(r.code)}</td><td class="num">${r.n}</td>
+        <td class="num">${r.pct.toFixed(1)}%</td><td class="num">${gbp(r.v)}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <p class="foot">"Non-Compliant" means the cancellation was logged without one of the RC1–RC5 codes.
+      At ${(A.cancReasons.find(r=>r.code==='Non-Compliant')?.pct||0).toFixed(0)}% it is a process gap:
+      that share of cancellations has no recorded reason to act on.</p>
+  </div>
+
+  <div class="card">
     <h2>Quote desk — conversion against the quotes they were given</h2>
+    <div class="note"><b>These per-person rates exclude cancellations.</b> The Cancelled Bookings report
+      has no "issued by" column, so a cancellation cannot be attributed to the person who quoted it.
+      Per-person figures are therefore converted ÷ (converted + never taken up) and will read about
+      ${(A.funnel.rateTwoFile-A.funnel.rate).toFixed(1)} points higher than the company rate above.
+      The <i>gaps</i> are unaffected — actual and expected are both on this basis — but the absolute
+      percentages are not the company number.</div>
     <div class="note"><b>Why the raw rate is unfair.</b> Customers convert at anywhere from
       11% to 100%, and a £500 quote converts at ${A.bandTable[4].rate.toFixed(0)}% against
       ${A.bandTable[0].rate.toFixed(0)}% for one under £50. Someone handed hard customers and big

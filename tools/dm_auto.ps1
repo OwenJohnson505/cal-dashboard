@@ -576,7 +576,25 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'Run' {
-        $plan = if ($Only) { @($Script:ReportPlan | Where-Object { $Only -contains $_.Tile }) } else { $Script:ReportPlan }
+        if ($Only) {
+            $plan = @($Script:ReportPlan | Where-Object { $Only -contains $_.Tile })
+            # Allow -Only to reach any mapped report, not just the nightly plan,
+            # so a report can be tested before it is trusted enough to schedule.
+            $missing = @($Only | Where-Object { $_ -notin @($plan.Tile) })
+            if ($missing) {
+                $mapPath = Join-Path $PSScriptRoot 'dm_report_map.csv'
+                if (Test-Path $mapPath) {
+                    foreach ($m in $missing) {
+                        $row = Import-Csv $mapPath | Where-Object { $_.Tile -eq $m } | Select-Object -First 1
+                        if ($row) {
+                            $plan += @{ Group = $row.Group; Tile = $row.Tile }
+                            Write-Log "Report '$m' is not in the nightly plan - running it from the map for testing." 'WARN'
+                        }
+                    }
+                }
+            }
+        }
+        else { $plan = $Script:ReportPlan }
         if (-not $plan) { throw "No reports matched -Only: $($Only -join ', ')" }
         Write-Log "=== run: $($From.ToString('yyyy-MM-dd')) to $($To.ToString('yyyy-MM-dd')), $(@($plan).Count) report(s) x $($Profile.Count) profile(s) ==="
         $ok = 0; $failed = @()

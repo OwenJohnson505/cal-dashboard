@@ -314,11 +314,18 @@ function analyse(){
       coverage: R.rev? base/R.rev*100:0};
   }).filter(r=>r.rev>25000).sort((a,b)=>(a.gap??99)-(b.gap??99));
 
-  /* ---- QUOTE DESK: conversion standardised on customer AND value ---- */
+  /* ---- QUOTE DESK ----
+     De-duplicate first. The quote uploads append without checking what is already
+     there, so an overlapping export duplicates rows: 38% of the converted file is
+     re-uploaded copies of the same quote ref. Counting those inflates every rate. */
+  const dedupe=(rows,key)=>{ const seen=new Set(); return rows.filter(r=>{
+    const k=String(r[key]??''); if(!k) return true; if(seen.has(k)) return false; seen.add(k); return true; }); };
+  const convU = dedupe(RAW.conv.filter(keep),'our_ref');
+  const ncU   = dedupe(RAW.nonconv.filter(keep),'quote_no');
   const qs=[];
-  RAW.conv.filter(keep).forEach(r=>qs.push({p:issuer(r.quote_issued_by),c:canon(r.customer_name),
+  convU.forEach(r=>qs.push({p:issuer(r.quote_issued_by),c:canon(r.customer_name),
     v:+(r.income||0), band:valueBand(+(r.income||0)), won:1, tariff:r.tariff}));
-  RAW.nonconv.filter(keep).forEach(r=>qs.push({p:issuer(r.quote_issued_by),c:canon(r.customer_name),
+  ncU.forEach(r=>qs.push({p:issuer(r.quote_issued_by),c:canon(r.customer_name),
     v:+(r.income||0), band:valueBand(+(r.income||0)), won:0, tariff:r.tariff}));
   const overall = qs.length? qs.reduce((a,q)=>a+q.won,0)/qs.length : 0.5;
   const cAgg={}, bAgg={};
@@ -361,14 +368,18 @@ function analyse(){
      Only Q-prefixed cancellations are quote cancellations; BT refs are booking
      cancellations and are not part of the quote funnel. 259 of the cancelled
      rows also appear in the non-converted file, so they are counted once. */
-  const cancQ = RAW.canc.filter(keep).filter(r=>String(r.our_ref||'').startsWith('Q'));
-  const ncRefs = new Set(RAW.nonconv.filter(keep).map(r=>String(r.quote_no||'')));
-  const cancUnique = cancQ.filter(r=>!ncRefs.has(String(r.our_ref||'')));
-  const won = RAW.conv.filter(keep).length;
-  const lostNc = RAW.nonconv.filter(keep).length;
+  const cancQ = dedupe(RAW.canc.filter(keep).filter(r=>String(r.our_ref||'').startsWith('Q')),'our_ref');
+  const convRefs = new Set(convU.map(r=>String(r.our_ref||'')));
+  const cancRefs = new Set(cancQ.map(r=>String(r.our_ref||'')));
+  /* a quote has ONE outcome: won beats cancelled beats still-open */
+  const cancUnique = cancQ.filter(r=>!convRefs.has(String(r.our_ref||'')));
+  const ncUnique = ncU.filter(r=>!convRefs.has(String(r.quote_no||''))
+                              && !cancRefs.has(String(r.quote_no||'')));
+  const won = convU.length;
+  const lostNc = ncUnique.length;
   const lostCa = cancUnique.length;
   const funnel = {
-    won, lostNc, lostCa, dupes: cancQ.length-cancUnique.length,
+    won, lostNc, lostCa, dupes: (RAW.conv.filter(keep).length-convU.length)+(RAW.nonconv.filter(keep).length-ncU.length),
     total: won+lostNc+lostCa,
     rate: (won+lostNc+lostCa)? won/(won+lostNc+lostCa)*100 : 0,
     rateTwoFile: (won+lostNc)? won/(won+lostNc)*100 : 0,
@@ -592,8 +603,7 @@ function render(){
       <b>${A.funnel.rate.toFixed(1)}%</b>. Leaving cancellations out gives
       ${A.funnel.rateTwoFile.toFixed(1)}% — flattering by
       ${(A.funnel.rateTwoFile-A.funnel.rate).toFixed(1)} points.
-      ${A.funnel.dupes} cancelled quotes also appear in the non-converted file and are counted once,
-      not twice. Cancelled quotes are worth ${gbp(A.funnel.cancValue)}.</div>
+      ${A.funnel.dupes.toLocaleString()} duplicate rows from overlapping uploads were removed before counting, and a quote with more than one outcome is counted once under the strongest one. Cancelled quotes are worth ${gbp(A.funnel.cancValue)}.</div>
     <h3>Why bookings get cancelled</h3>
     <div class="scroll"><table>
       <thead><tr><th>Reason</th><th class="num">Count</th><th class="num">Share</th><th class="num">Value</th></tr></thead>

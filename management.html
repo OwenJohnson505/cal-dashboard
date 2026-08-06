@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cal — Management Review</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+:root{
+  color-scheme: light;
+  --surface-1:#fcfcfb; --plane:#f9f9f7;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s8:#e34948;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --good-text:#006300;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --surface-1:#1a1a19; --plane:#0d0d0d;
+    --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s8:#e66767;
+    --good-text:#0ca30c;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d;
+  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s8:#e66767;
+  --good-text:#0ca30c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+h1{font-size:21px;margin:0;letter-spacing:-.01em}
+h2{font-size:15px;margin:0 0 4px;letter-spacing:-.005em}
+.sub{color:var(--ink-2);font-size:13px}
+.muted{color:var(--muted)}
+header.bar{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+header.bar .spacer{flex:1}
+button,select{font:inherit;color:var(--ink);background:var(--surface-1);
+  border:1px solid var(--ring);border-radius:8px;padding:7px 12px;cursor:pointer}
+button.primary{background:var(--s1);border-color:transparent;color:#fff}
+.card{background:var(--surface-1);border:1px solid var(--ring);border-radius:14px;
+  padding:20px 22px;margin-bottom:16px}
+.grid{display:grid;gap:16px}
+@media(min-width:820px){ .grid.two{grid-template-columns:1fr 1fr} }
+
+/* verdict */
+.verdict{border-left:4px solid var(--s1);padding-left:18px}
+.verdict.warn{border-left-color:var(--warning)}
+.verdict.bad{border-left-color:var(--critical)}
+.verdict p{margin:.5em 0;font-size:16px;line-height:1.6}
+.hero{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end;margin:6px 0 14px}
+.hero .fig{font-size:40px;font-weight:640;letter-spacing:-.02em;line-height:1}
+.hero .lab{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.delta{font-size:14px;font-weight:600}
+.up{color:var(--good-text)} .down{color:var(--critical)}
+
+/* status chips */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  padding:3px 9px;border-radius:999px;border:1px solid var(--ring);white-space:nowrap}
+.chip.good{color:var(--good-text)} .chip.warning{color:#8a5b00}
+.chip.serious{color:#a5451f} .chip.critical{color:var(--critical)}
+@media (prefers-color-scheme: dark){ :root:where(:not([data-theme="light"])) .chip.warning{color:var(--warning)}
+  :root:where(:not([data-theme="light"])) .chip.serious{color:var(--serious)} }
+:root[data-theme="dark"] .chip.warning{color:var(--warning)}
+:root[data-theme="dark"] .chip.serious{color:var(--serious)}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:11.5px;
+  text-transform:uppercase;letter-spacing:.05em;padding:0 10px 8px 0;border-bottom:1px solid var(--grid)}
+td{padding:9px 10px 9px 0;border-bottom:1px solid var(--grid);vertical-align:top}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+.scroll{overflow-x:auto}
+
+/* crack list */
+.crack{display:flex;gap:12px;padding:13px 0;border-bottom:1px solid var(--grid)}
+.crack:last-child{border-bottom:none}
+.crack .dot{flex:0 0 8px;height:8px;border-radius:50%;margin-top:7px}
+.crack .body{flex:1}
+.crack .t{font-weight:600;margin-bottom:2px}
+.crack .d{color:var(--ink-2);font-size:13.5px}
+.crack .ev{color:var(--muted);font-size:12.5px;margin-top:3px;font-variant-numeric:tabular-nums}
+
+.login{max-width:340px;margin:14vh auto;text-align:left}
+.login input{width:100%;padding:10px 12px;margin:6px 0 14px;border-radius:8px;
+  border:1px solid var(--ring);background:var(--surface-1);color:var(--ink);font:inherit}
+.err{color:var(--critical);font-size:13px;min-height:18px}
+.foot{color:var(--muted);font-size:12px;margin-top:8px}
+svg{display:block;max-width:100%}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+</style>
+</head>
+<body>
+
+<div id="login" class="wrap login">
+  <h1>Cal — Management Review</h1>
+  <p class="sub" style="margin:6px 0 18px">Sign in with your dashboard account.</p>
+  <label class="sub">Email</label>
+  <input id="em" type="email" autocomplete="username">
+  <label class="sub">Password</label>
+  <input id="pw" type="password" autocomplete="current-password">
+  <button class="primary" id="go" style="width:100%">Sign in</button>
+  <div class="err" id="err"></div>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <header class="bar">
+    <div>
+      <h1>Management Review</h1>
+      <div class="sub" id="period">—</div>
+    </div>
+    <div class="spacer"></div>
+    <select id="depot">
+      <option value="all">Both depots</option>
+      <option value="north">North</option>
+      <option value="south">South</option>
+    </select>
+    <button id="theme" title="Toggle theme">◐</button>
+    <button id="out">Sign out</button>
+  </header>
+  <div id="content"><p class="muted">Loading…</p></div>
+</div>
+
+<script>
+const SB_URL='https://flvxrrwgzualfzfczlim.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsdnhycndnenVhbGZ6ZmN6bGltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NjU4MjksImV4cCI6MjA5MjA0MTgyOX0.WHvIcSVVmJgo1Os_SNQ6HrgzVG3Zs6VhmLa_t-K66aw';
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+let session=null, RAW={};
+
+/* ---------- helpers ---------- */
+const gbp = n => (n<0?'-':'')+'£'+Math.abs(Math.round(n)).toLocaleString();
+const gbpk = n => { const a=Math.abs(n); if(a>=1e6) return (n/1e6).toFixed(2)+'m';
+  if(a>=1e3) return Math.round(n/1e3)+'k'; return Math.round(n).toString(); };
+const pc = (n,d=1) => (n>=0?'+':'')+n.toFixed(d)+'%';
+const el = (h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstElementChild;};
+const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* Two quote files use different name forms for the same people. Derived from the
+   Booking Issues report, which carries full names for both. Without this every
+   person scores 100% or 0% conversion, which is why the old figure was useless. */
+const ISSUER_ALIAS = {
+  KS:'Kyle Speakman', KyleS:'Kyle Speakman',
+  KA:'Katie Atkin', KatieA:'Katie Atkin',
+  AH:'Aylesh Hall', AyleshH:'Aylesh Hall',
+  Steven:'Steven Selfe', StevenS:'Steven Selfe',
+  Sophie:'Sophie Blakeley', SophieB:'Sophie Blakeley',
+  JC:'Jamie Chambers', JamieC:'Jamie Chambers',
+  MaxB:'Max Boardman', IslaB:'Isla Batchelor',
+  Jodie:'Jodie F', JodieF:'Jodie F',
+  nic:'Nicola Doherty', NicolaD:'Nicola Doherty',
+  MW:'Megan W', MeganW:'Megan W',
+  AA:'Alex A', AlexA:'Alex A',
+  JamieA:'Jamie A', RickyG:'Ricky G',
+  MF:'Maia F', MaiaF:'Maia F',
+  MB:'Michael B', MichaelB:'Michael B',
+  MarissaJ:'Marissa Johnson'
+};
+const issuer = n => ISSUER_ALIAS[String(n||'').trim()] || (String(n||'').trim()||'(unattributed)');
+
+async function fetchAll(path){
+  const out=[]; let from=0; const size=1000;
+  for(;;){
+    const r = await fetch(`${SB_URL}/rest/v1/${path}${path.includes('?')?'&':'?'}limit=${size}&offset=${from}`,
+      {headers:{apikey:SB_KEY, Authorization:'Bearer '+session.access_token}});
+    if(!r.ok) throw new Error(path.split('?')[0]+': '+r.status);
+    const b = await r.json(); out.push(...b);
+    if(b.length<size) break; from+=size;
+  }
+  return out;
+}
+
+/* ---------- auth ---------- */
+document.getElementById('go').onclick = async () => {
+  const e=document.getElementById('err'); e.textContent='Signing in…';
+  const {data,error} = await sb.auth.signInWithPassword({
+    email:document.getElementById('em').value.trim(),
+    password:document.getElementById('pw').value});
+  if(error){ e.textContent=error.message; return; }
+  session=data.session; e.textContent=''; start();
+};
+document.getElementById('out').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+document.getElementById('theme').onclick = () => {
+  const cur=document.documentElement.getAttribute('data-theme');
+  const next = cur==='dark' ? 'light' : cur==='light' ? '' : 'dark';
+  if(next) document.documentElement.setAttribute('data-theme',next);
+  else document.documentElement.removeAttribute('data-theme');
+  if(RAW.jobs) render();
+};
+document.getElementById('depot').onchange = render;
+
+async function start(){
+  document.getElementById('login').hidden=true;
+  document.getElementById('app').hidden=false;
+  try{
+    const [jobs,conv,nonconv,canc,repAli,custAli] = await Promise.all([
+      fetchAll('jobs?select=week_label,depot,customer_name,sales_name,revenue,cost,profit,vehicle,call_sign,supplier&week_label=gte.2026-W10&order=id'),
+      fetchAll('converted_quotes?select=week_label,depot,customer_name,sales_name,quote_issued_by,income&week_label=gte.2026-W10&order=id'),
+      fetchAll('non_converted_quotes?select=week_label,depot,customer_name,sales_name,quote_issued_by,income&week_label=gte.2026-W10&order=id'),
+      fetchAll('cancelled_quotes?select=week_label,depot,customer_name,value,reason_code&week_label=gte.2026-W10&order=id'),
+      fetchAll('rep_aliases?select=alias_name,canonical_name'),
+      fetchAll('customer_aliases?select=alias_name,canonical_name')
+    ]);
+    RAW={jobs,conv,nonconv,canc,
+      rep:Object.fromEntries(repAli.map(r=>[r.alias_name,r.canonical_name])),
+      cust:Object.fromEntries(custAli.map(r=>[r.alias_name,r.canonical_name]))};
+    render();
+  }catch(err){
+    document.getElementById('content').innerHTML =
+      `<div class="card"><h2>Couldn't load</h2><p class="sub">${esc(err.message)}</p></div>`;
+  }
+}
+
+/* ---------- analysis ---------- */
+function analyse(){
+  const dep=document.getElementById('depot').value;
+  const keep = r => dep==='all' || r.depot===dep;
+  const jobs = RAW.jobs.filter(keep);
+  const canon = n => RAW.cust[n] || n;
+  const rep = n => { const t=String(n||'').trim(); if(!t) return '(unattributed)'; return RAW.rep[t]||t; };
+
+  const weeks=[...new Set(jobs.map(j=>j.week_label))].sort();
+  const cur=weeks[weeks.length-1], prev=weeks[weeks.length-2];
+  const wk = w => jobs.filter(j=>j.week_label===w);
+
+  const sum = rows => rows.reduce((a,r)=>({
+    rev:a.rev+ +(r.revenue||0), cost:a.cost+ +(r.cost||0),
+    prof:a.prof+ +(r.profit||0), n:a.n+1}),{rev:0,cost:0,prof:0,n:0});
+
+  const series = weeks.map(w=>{
+    const s=sum(wk(w));
+    const byC={}; wk(w).forEach(j=>{const c=canon(j.customer_name); byC[c]=(byC[c]||0)+ +(j.revenue||0);});
+    const vals=Object.values(byC).sort((a,b)=>b-a);
+    const tot=vals.reduce((a,b)=>a+b,0)||1;
+    return {w, ...s, margin:s.rev?s.prof/s.rev*100:0,
+      customers:vals.length,
+      top1:vals[0]/tot*100, top1name:Object.keys(byC).sort((a,b)=>byC[b]-byC[a])[0],
+      top5:vals.slice(0,5).reduce((a,b)=>a+b,0)/tot*100,
+      hhi:vals.reduce((a,v)=>a+Math.pow(v/tot*100,2),0)};
+  });
+  const C=series[series.length-1], P=series[series.length-2];
+
+  /* revenue bridge, current vs prior week */
+  const cm={},pm={};
+  wk(cur).forEach(j=>{const c=canon(j.customer_name); cm[c]=(cm[c]||0)+ +(j.revenue||0);});
+  wk(prev).forEach(j=>{const c=canon(j.customer_name); pm[c]=(pm[c]||0)+ +(j.revenue||0);});
+  const firstSeen={};
+  jobs.forEach(j=>{const c=canon(j.customer_name);
+    if(!firstSeen[c]||j.week_label<firstSeen[c]) firstSeen[c]=j.week_label;});
+  const bridge={neww:0,returned:0,grew:0,shrank:0,lost:0};
+  const movers=[];
+  new Set([...Object.keys(cm),...Object.keys(pm)]).forEach(c=>{
+    const a=cm[c]||0, b=pm[c]||0, d=a-b;
+    if(b===0 && firstSeen[c]===cur) bridge.neww+=d;
+    else if(b===0) bridge.returned+=d;
+    else if(a===0) bridge.lost+=d;
+    else if(d>0) bridge.grew+=d; else bridge.shrank+=d;
+    movers.push({c,cur:a,prev:b,d});
+  });
+  movers.sort((x,y)=>Math.abs(y.d)-Math.abs(x.d));
+  const topMover=movers[0];
+  /* the crack test: strip the single biggest mover and see what is left */
+  const exRevC=C.rev-(topMover?topMover.cur:0), exRevP=P.rev-(topMover?topMover.prev:0);
+  const underlying = exRevP? (exRevC-exRevP)/exRevP*100 : 0;
+  const headline = P.rev? (C.rev-P.rev)/P.rev*100 : 0;
+
+  /* sales */
+  const repMap={};
+  [cur,prev].forEach(w=>wk(w).forEach(j=>{
+    const r=rep(j.sales_name); repMap[r]=repMap[r]||{cur:0,prev:0,prof:0,curProf:0,accts:new Set(),n:0};
+    if(j.week_label===cur){ repMap[r].cur+= +(j.revenue||0); repMap[r].curProf+= +(j.profit||0);
+      repMap[r].accts.add(canon(j.customer_name)); repMap[r].n++; }
+    else repMap[r].prev+= +(j.revenue||0);
+  }));
+  const base={}; // 12-week baseline
+  const baseWeeks=weeks.slice(-13,-1);
+  baseWeeks.forEach(w=>wk(w).forEach(j=>{const r=rep(j.sales_name);
+    base[r]=(base[r]||0)+ +(j.revenue||0);}));
+  const reps=Object.entries(repMap).map(([name,v])=>{
+    const avg=(base[name]||0)/Math.max(baseWeeks.length,1);
+    const top = [...v.accts].map(a=>({a,v:wk(cur).filter(j=>canon(j.customer_name)===a && rep(j.sales_name)===name)
+      .reduce((s,j)=>s+ +(j.revenue||0),0)})).sort((x,y)=>y.v-x.v)[0];
+    return {name, cur:v.cur, avg, vs: avg? (v.cur-avg)/avg*100 : 0,
+      margin: v.cur? v.curProf/v.cur*100 : 0, accts:v.accts.size,
+      topShare: v.cur&&top? top.v/v.cur*100 : 0, topName: top?top.a:'—'};
+  }).filter(r=>r.cur>0).sort((a,b)=>b.cur-a.cur);
+
+  /* supply chain: contract (letter call sign) vs CX */
+  const mix = weeks.slice(-12).map(w=>{
+    const rows=wk(w); let cr=0,cp=0,xr=0,xp=0;
+    rows.forEach(j=>{ const contract=/^[A-Za-z]/.test(j.call_sign||'');
+      if(contract){cr+= +(j.revenue||0); cp+= +(j.profit||0);} else {xr+= +(j.revenue||0); xp+= +(j.profit||0);} });
+    return {w, share: (cr+xr)? cr/(cr+xr)*100:0,
+      cm: cr? cp/cr*100:0, xm: xr? xp/xr*100:0};
+  });
+
+  /* customer service: quote conversion by issuer */
+  const q={};
+  RAW.conv.filter(keep).filter(r=>r.week_label>=weeks[weeks.length-4]).forEach(r=>{
+    const p=issuer(r.quote_issued_by); q[p]=q[p]||{c:0,n:0,val:0}; q[p].c++; q[p].val+= +(r.income||0);});
+  RAW.nonconv.filter(keep).filter(r=>r.week_label>=weeks[weeks.length-4]).forEach(r=>{
+    const p=issuer(r.quote_issued_by); q[p]=q[p]||{c:0,n:0,val:0}; q[p].n++;});
+  const desk=Object.entries(q).map(([name,v])=>({name,conv:v.c,non:v.n,
+    rate: (v.c+v.n)? v.c/(v.c+v.n)*100:0, val:v.val}))
+    .filter(d=>d.conv+d.non>=15).sort((a,b)=>b.rate-a.rate);
+
+  /* onboarding & retention */
+  const newC = weeks.slice(-8).map(w=>{
+    const names=Object.keys(firstSeen).filter(c=>firstSeen[c]===w);
+    const val=jobs.filter(j=>names.includes(canon(j.customer_name)))
+      .reduce((s,j)=>s+ +(j.revenue||0),0);
+    return {w,count:names.length,val};
+  });
+  const lastSeen={};
+  jobs.forEach(j=>{const c=canon(j.customer_name);
+    if(!lastSeen[c]||j.week_label>lastSeen[c]) lastSeen[c]=j.week_label;});
+  const rev12={};
+  weeks.slice(-12).forEach(w=>wk(w).forEach(j=>{const c=canon(j.customer_name);
+    rev12[c]=(rev12[c]||0)+ +(j.revenue||0);}));
+  const atRisk=Object.keys(rev12).filter(c=>lastSeen[c]<weeks[weeks.length-3])
+    .map(c=>({c,rev:rev12[c],last:lastSeen[c]})).sort((a,b)=>b.rev-a.rev).slice(0,8);
+
+  /* loss-making */
+  const lossCur = wk(cur).filter(j=> +(j.profit||0)<0);
+  const lossPrev= wk(prev).filter(j=> +(j.profit||0)<0);
+  const lossVal = lossCur.reduce((s,j)=>s+ +(j.profit||0),0);
+  const lossValP= lossPrev.reduce((s,j)=>s+ +(j.profit||0),0);
+
+  return {weeks,cur,prev,series,C,P,bridge,movers,topMover,headline,underlying,
+    reps,mix,desk,newC,atRisk,lossCur,lossVal,lossValP,dep};
+}
+
+/* ---------- cracks engine ---------- */
+function cracks(A){
+  const out=[];
+  const push=(sev,t,d,ev)=>out.push({sev,t,d,ev});
+
+  if(A.headline>0 && A.underlying<0)
+    push('critical','A good headline is hiding a shrinking base',
+      `Revenue rose ${pc(A.headline)}, but strip out ${esc(A.topMover.c)} and the rest of the book fell ${pc(A.underlying)}. The growth is one account, not a trend.`,
+      `${A.topMover.c}: ${gbp(A.topMover.prev)} → ${gbp(A.topMover.cur)} (${gbp(A.topMover.d)}). Everything else: ${gbp(A.C.rev-A.topMover.cur-(A.P.rev-A.topMover.prev))}.`);
+  else if(A.headline>0 && A.underlying < A.headline/2)
+    push('warning','Most of the growth is one account',
+      `Revenue rose ${pc(A.headline)}; without ${esc(A.topMover.c)} it is ${pc(A.underlying)}.`,
+      `${A.topMover.c} contributed ${gbp(A.topMover.d)} of the ${gbp(A.C.rev-A.P.rev)} change.`);
+
+  const hhiCh = A.P.hhi? (A.C.hhi-A.P.hhi)/A.P.hhi*100 : 0;
+  if(hhiCh>15)
+    push(A.C.top1>25?'critical':'serious','Concentration got materially worse',
+      `Your largest customer is now ${A.C.top1.toFixed(1)}% of revenue, up from ${A.P.top1.toFixed(1)}%. A week this good is less secure than a week half the size spread wider.`,
+      `HHI ${Math.round(A.P.hhi)} → ${Math.round(A.C.hhi)} (${pc(hhiCh,0)}). Top 5 now ${A.C.top5.toFixed(1)}%.`);
+
+  if(A.headline>0 && A.C.margin<A.P.margin-0.5)
+    push('serious','Revenue up, margin down',
+      `You sold more and kept less of it. Volume is being bought rather than won.`,
+      `Margin ${A.P.margin.toFixed(1)}% → ${A.C.margin.toFixed(1)}%, on revenue ${gbp(A.P.rev)} → ${gbp(A.C.rev)}.`);
+
+  if(A.C.customers < A.P.customers && A.headline>0)
+    push('warning','Fewer customers, more revenue',
+      `Revenue grew while the number of trading accounts fell — the book is getting narrower even as it gets bigger.`,
+      `Active customers ${A.P.customers} → ${A.C.customers}.`);
+
+  const n=A.newC.slice(-4), older=A.newC.slice(-8,-4);
+  const nv=n.reduce((s,x)=>s+x.val,0), ov=older.reduce((s,x)=>s+x.val,0);
+  if(ov>0 && nv < ov*0.6)
+    push('warning','New customers are getting smaller',
+      `You are still winning logos, but they are worth much less than the ones won a month earlier. Count alone would look fine.`,
+      `Last 4 weeks: ${n.reduce((s,x)=>s+x.count,0)} new worth ${gbp(nv)}. Previous 4: ${older.reduce((s,x)=>s+x.count,0)} worth ${gbp(ov)}.`);
+
+  const m0=A.mix[0], m1=A.mix[A.mix.length-1];
+  if(m0 && m1 && m1.share < m0.share-3)
+    push('serious','Contract driver share is falling',
+      `Work is drifting from your own contracted drivers to the spot market. That is capacity you pay to keep and are not using.`,
+      `Share of revenue ${m0.share.toFixed(1)}% → ${m1.share.toFixed(1)}% over ${A.mix.length} weeks.`);
+  if(m1 && m1.cm < m1.xm-5)
+    push('serious','Contract drivers earn you less than the spot market',
+      `Every job on a contract driver returns materially less margin than the same job on Courier Exchange. Worth checking whether they are paid a fixed weekly rate — if so this is expected and the comparison is unfair.`,
+      `This week: contract ${m1.cm.toFixed(1)}% vs CX ${m1.xm.toFixed(1)}% margin.`);
+
+  if(A.lossVal < A.lossValP)
+    push('warning','Loss-making work increased',
+      `More value was written off on jobs that cost more than they earned.`,
+      `${A.lossCur.length} loss-making jobs this week totalling ${gbp(A.lossVal)} (last week ${gbp(A.lossValP)}).`);
+
+  const spike=A.reps.find(r=>r.vs>100 && r.accts<8);
+  if(spike)
+    push('warning',`${esc(spike.name)}'s week is one account, not a run`,
+      `A rep well above baseline on a handful of accounts is a concentration event wearing a rosette. It will not repeat unless that account repeats.`,
+      `${pc(spike.vs,0)} vs 12-week average, across ${spike.accts} accounts; ${spike.topShare.toFixed(0)}% of it is ${esc(spike.topName)}.`);
+
+  const lowM=A.reps.filter(r=>r.cur>20000 && r.margin < A.C.margin-8)
+    .sort((a,b)=>a.margin-b.margin)[0];
+  if(lowM)
+    push('serious',`${esc(lowM.name)} is running well below company margin`,
+      `A large book at a low margin is easy to miss because the revenue looks healthy.`,
+      `${gbp(lowM.cur)} at ${lowM.margin.toFixed(1)}% vs company ${A.C.margin.toFixed(1)}% — about ${gbp(lowM.cur*(A.C.margin-lowM.margin)/100)} of margin foregone this week.`);
+
+  if(!out.length)
+    push('good','Nothing is hiding under the headline',
+      'Growth, margin, concentration and customer count all moved in the same direction. That is rarer than it sounds.','');
+  const order={critical:0,serious:1,warning:2,good:3};
+  return out.sort((a,b)=>order[a.sev]-order[b.sev]);
+}
+
+/* ---------- small charts ---------- */
+function bridgeChart(A){
+  const items=[
+    {k:'New',v:A.bridge.neww,c:'var(--s3)'},
+    {k:'Returned',v:A.bridge.returned,c:'var(--s1)'},
+    {k:'Grew',v:A.bridge.grew,c:'var(--s1)'},
+    {k:'Shrank',v:A.bridge.shrank,c:'var(--s2)'},
+    {k:'Lost',v:A.bridge.lost,c:'var(--s8)'}];
+  const W=620,H=190,pad=30, bw=64, gap=(W-pad*2-bw*items.length*1)/(items.length-1||1);
+  let run=A.P.rev; const pts=[];
+  items.forEach(it=>{ pts.push({...it, from:run, to:run+it.v}); run+=it.v; });
+  const lo=Math.min(A.P.rev,A.C.rev,...pts.map(p=>Math.min(p.from,p.to)));
+  const hi=Math.max(A.P.rev,A.C.rev,...pts.map(p=>Math.max(p.from,p.to)));
+  const span=(hi-lo)||1, y=v=>H-pad-((v-lo)/span)*(H-pad*2);
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Revenue bridge">`;
+  s+=`<line x1="${pad}" y1="${y(A.P.rev)}" x2="${W-pad}" y2="${y(A.P.rev)}" stroke="var(--axis)" stroke-dasharray="3 3" stroke-width="1"/>`;
+  pts.forEach((p,i)=>{
+    const x=pad+i*(bw+gap), top=y(Math.max(p.from,p.to)), h=Math.max(Math.abs(y(p.from)-y(p.to)),2);
+    s+=`<rect x="${x}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${p.c}" stroke="var(--surface-1)" stroke-width="2"><title>${p.k}: ${gbp(p.v)}</title></rect>`;
+    s+=`<text x="${x+bw/2}" y="${H-10}" text-anchor="middle" font-size="11" fill="var(--muted)">${p.k}</text>`;
+    s+=`<text x="${x+bw/2}" y="${top-6}" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink-2)">${p.v>=0?'+':''}${gbpk(p.v)}</text>`;
+  });
+  s+=`</svg>`;
+  return s;
+}
+function sparkline(vals,color,w=190,h=40){
+  if(!vals.length) return '';
+  const lo=Math.min(...vals),hi=Math.max(...vals),sp=(hi-lo)||1;
+  const p=vals.map((v,i)=>`${(i/(vals.length-1||1))*(w-4)+2},${h-2-((v-lo)/sp)*(h-6)}`).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${p}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+/* ---------- render ---------- */
+function render(){
+  const A=analyse(), K=cracks(A);
+  const worst=K[0].sev;
+  const tone = worst==='critical'?'bad':(worst==='serious'||worst==='warning')?'warn':'';
+  document.getElementById('period').textContent =
+    `Week ${A.cur} vs ${A.prev} · ${A.dep==='all'?'North + South':A.dep}`;
+
+  const headlineLine = A.headline>0 && A.underlying<0
+    ? `Revenue rose <strong>${pc(A.headline)}</strong> to <strong>${gbp(A.C.rev)}</strong> — but underlying revenue, excluding ${esc(A.topMover.c)}, <strong class="down">fell ${pc(A.underlying)}</strong>.`
+    : `Revenue ${A.headline>=0?'rose':'fell'} <strong>${pc(A.headline)}</strong> to <strong>${gbp(A.C.rev)}</strong>; excluding ${esc(A.topMover.c)} the rest of the book ${A.underlying>=0?'rose':'fell'} <strong>${pc(A.underlying)}</strong>.`;
+
+  const html = `
+  <div class="card verdict ${tone}">
+    <div class="hero">
+      <div><div class="lab">Revenue</div><div class="fig">${gbp(A.C.rev)}</div>
+        <div class="delta ${A.headline>=0?'up':'down'}">${pc(A.headline)} vs last week</div></div>
+      <div><div class="lab">Underlying (ex ${esc(A.topMover.c).slice(0,18)})</div>
+        <div class="fig ${A.underlying>=0?'':'down'}">${pc(A.underlying)}</div>
+        <div class="delta muted">the number that repeats</div></div>
+      <div><div class="lab">Margin</div><div class="fig">${A.C.margin.toFixed(1)}%</div>
+        <div class="delta ${A.C.margin>=A.P.margin?'up':'down'}">${(A.C.margin-A.P.margin>=0?'+':'')}${(A.C.margin-A.P.margin).toFixed(1)} pts</div></div>
+      <div><div class="lab">Top customer share</div><div class="fig">${A.C.top1.toFixed(1)}%</div>
+        <div class="delta ${A.C.top1<=A.P.top1?'up':'down'}">${(A.C.top1-A.P.top1>=0?'+':'')}${(A.C.top1-A.P.top1).toFixed(1)} pts</div></div>
+    </div>
+    <p>${headlineLine}</p>
+    <p class="sub">${A.C.customers} accounts traded (${A.P.customers} last week). Top five are ${A.C.top5.toFixed(1)}% of revenue.
+    ${A.lossCur.length} jobs lost money, totalling ${gbp(A.lossVal)}.</p>
+  </div>
+
+  <div class="card">
+    <h2>What the headline is hiding</h2>
+    <p class="sub" style="margin-bottom:10px">Each item is a place where the top-line reads better than what sits underneath it.</p>
+    ${K.map(k=>`<div class="crack">
+      <div class="dot" style="background:var(--${k.sev})"></div>
+      <div class="body"><div class="t">${k.t}</div><div class="d">${k.d}</div>
+      ${k.ev?`<div class="ev">${k.ev}</div>`:''}</div>
+      <div><span class="chip ${k.sev}">${k.sev}</span></div></div>`).join('')}
+  </div>
+
+  <div class="grid two">
+    <div class="card">
+      <h2>Where the change came from</h2>
+      <p class="sub">${gbp(A.P.rev)} → ${gbp(A.C.rev)}, decomposed by what each customer did.</p>
+      ${bridgeChart(A)}
+      <div class="legend">
+        <span><i style="background:var(--s3)"></i>New</span>
+        <span><i style="background:var(--s1)"></i>Returned / grew</span>
+        <span><i style="background:var(--s2)"></i>Shrank</span>
+        <span><i style="background:var(--s8)"></i>Lost</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Concentration over 12 weeks</h2>
+      <p class="sub">Top-customer share. Rising means a better week is a less safe week.</p>
+      ${sparkline(A.series.slice(-12).map(s=>s.top1),'var(--s2)',360,80)}
+      <table style="margin-top:10px"><tbody>
+        <tr><td class="muted">Largest customer</td><td class="num">${esc(A.C.top1name)}</td></tr>
+        <tr><td class="muted">Their share</td><td class="num">${A.C.top1.toFixed(1)}%</td></tr>
+        <tr><td class="muted">Top 5 share</td><td class="num">${A.C.top5.toFixed(1)}%</td></tr>
+        <tr><td class="muted">HHI</td><td class="num">${Math.round(A.C.hhi)} (was ${Math.round(A.P.hhi)})</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Sales</h2>
+    <p class="sub">Against each rep's own 12-week average, not against each other. "One account" is the share of their week sitting in their single biggest customer.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Rep</th><th class="num">This week</th><th class="num">vs own avg</th>
+      <th class="num">Margin</th><th class="num">Accounts</th><th>Biggest account</th><th class="num">One account</th></tr></thead>
+      <tbody>${A.reps.slice(0,10).map(r=>`<tr>
+        <td>${esc(r.name)}</td><td class="num">${gbp(r.cur)}</td>
+        <td class="num ${r.vs>=0?'up':'down'}">${pc(r.vs,0)}</td>
+        <td class="num ${r.margin<A.C.margin-8?'down':''}">${r.margin.toFixed(1)}%</td>
+        <td class="num">${r.accts}</td><td>${esc(r.topName).slice(0,26)}</td>
+        <td class="num ${r.topShare>60?'down':''}">${r.topShare.toFixed(0)}%</td></tr>`).join('')}</tbody>
+    </table></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card">
+      <h2>Supply chain</h2>
+      <p class="sub">Contract drivers (letter call signs) versus Courier Exchange.</p>
+      <table><tbody>
+        <tr><td class="muted">Contract share of revenue</td><td class="num">${A.mix[A.mix.length-1].share.toFixed(1)}%
+          <span class="muted">(was ${A.mix[0].share.toFixed(1)}%)</span></td></tr>
+        <tr><td class="muted">Contract margin</td><td class="num">${A.mix[A.mix.length-1].cm.toFixed(1)}%</td></tr>
+        <tr><td class="muted">CX margin</td><td class="num">${A.mix[A.mix.length-1].xm.toFixed(1)}%</td></tr>
+        <tr><td class="muted">Gap</td><td class="num ${A.mix[A.mix.length-1].cm<A.mix[A.mix.length-1].xm?'down':'up'}">
+          ${(A.mix[A.mix.length-1].cm-A.mix[A.mix.length-1].xm).toFixed(1)} pts</td></tr>
+      </tbody></table>
+      <div style="margin-top:10px">${sparkline(A.mix.map(m=>m.share),'var(--s3)',360,60)}</div>
+      <p class="foot">Contract share, last ${A.mix.length} weeks.</p>
+    </div>
+
+    <div class="card">
+      <h2>Customer service — quote desk</h2>
+      <p class="sub">Last 4 weeks. Names are reconciled across the two quote files, which use different formats for the same people.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Person</th><th class="num">Won</th><th class="num">Lost</th><th class="num">Rate</th><th class="num">Value won</th></tr></thead>
+        <tbody>${A.desk.slice(0,9).map(d=>`<tr><td>${esc(d.name)}</td>
+          <td class="num">${d.conv}</td><td class="num">${d.non}</td>
+          <td class="num ${d.rate<40?'down':d.rate>=60?'up':''}">${d.rate.toFixed(0)}%</td>
+          <td class="num">${gbp(d.val)}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="card">
+      <h2>Onboarding — are new customers worth anything?</h2>
+      <p class="sub">Count alone flatters. Lifetime revenue is the honest measure.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Week</th><th class="num">New</th><th class="num">Lifetime revenue</th><th class="num">Avg each</th></tr></thead>
+        <tbody>${A.newC.map(n=>`<tr><td>${n.w}</td><td class="num">${n.count}</td>
+          <td class="num">${gbp(n.val)}</td><td class="num">${n.count?gbp(n.val/n.count):'—'}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2>Retention — quietly gone</h2>
+      <p class="sub">Traded in the last 12 weeks, nothing in the last 3. Ranked by what they were worth.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Customer</th><th class="num">12-week revenue</th><th class="num">Last seen</th></tr></thead>
+        <tbody>${A.atRisk.map(r=>`<tr><td>${esc(r.c).slice(0,32)}</td>
+          <td class="num">${gbp(r.rev)}</td><td class="num">${r.last}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <p class="foot">Contract/CX split uses the call-sign convention as a proxy — loading Delivery Master's Driver List will replace it with the authoritative driver type.
+  Booking Issues and Response Time are exported nightly but not yet in the database, so service quality is not represented here.</p>
+  `;
+  document.getElementById('content').innerHTML = html;
+}
+
+/* restore an existing session */
+sb.auth.getSession().then(({data})=>{ if(data.session){ session=data.session; start(); } });
+</script>
+</body>
+</html>

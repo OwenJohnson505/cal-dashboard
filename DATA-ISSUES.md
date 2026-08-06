@@ -153,7 +153,40 @@ are absent from the dashboard entirely.
 
 ---
 
-## 6. Analytical limits to remember
+## 6. Tariff pricing — one table decoded, one blocked
+
+20 of 500 tariffs carry **no distance rate** (base/included/rate all zero) and cover
+**~24% of quotes**, so they cannot be priced from the Tariffs grid. Their pricing
+lives in `System Setup > Special Price`, which turned out to be fully scrapeable
+(previously recorded as a per-customer modal — that was wrong).
+
+| quote bucket | share | status |
+|---|---|---|
+| priced from the rate card | 76.0% | working |
+| zero-rate → **Postcode** table | 3.0% | **solved** |
+| zero-rate → **Region** matrix | 20.7% | **blocked** |
+| zero-rate, no table found | 0.3% | open |
+
+**Solved — postcode mode** (5,220 rows, 27 customers, 54 tariffs). Column `v4` is the
+customer charge, validated against real jobs: 7 of 19 shared depot lanes match to the
+penny, median difference £0.00. Scrape: `tools/special_prices_postcode_CalNorth.csv`.
+
+**Blocked — region mode** (800 rows = 8 Regional tariffs × 10 × 10 UK regions). The
+grid exposes **no column headers** to UI Automation and the WPF surface will not screen-
+capture, so the two money columns are unidentified. Neither predicts actual revenue
+across 2,080 mapped jobs (0% and 2% exact; medians 4.0× and 1.71×). Reading them as
+price/cost implies −287% margin on 18T, so that reading is wrong.
+**Action: get the column headers from the vendor, or read them off the screen by hand.**
+Until then this table must not be used — it is the single biggest remaining gap in
+pricing attribution.
+
+Also confirmed dead ends: **Zone Price is unused** (no zones configured at all), and the
+**"Test Distance Rates" calculator** on the Distance Unit Rate screen is exact but only
+covers the 4 "NW Dynamic" tariffs, not Regional.
+
+---
+
+## 7. Analytical limits to remember
 
 - **Reps own their customers**, so no two work the same accounts. Standardising
   margin on (customer × vehicle) returns nothing; vehicle/tariff is the only

@@ -5,3 +5,4 @@ tools/tariffs_*.csv
 tools/dm_tariffs.log
 tools/quotes_*.csv
 tools/dm_quotes.log
+management-preview.html

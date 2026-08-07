@@ -207,7 +207,7 @@ async function start(){
   try{
     const [jobs,conv,nonconv,canc,repAli,custAli] = await Promise.all([
       fetchAll('jobs?select=week_label,depot,customer_name,sales_name,revenue,cost,profit,vehicle,call_sign&week_label=gte.2026-W14&order=id'),
-      fetchAll('converted_quotes?select=week_label,depot,customer_name,quote_issued_by,income,tariff&week_label=gte.2026-W14&order=id'),
+      fetchAll('converted_quotes?select=week_label,depot,customer_name,quote_issued_by,income,tariff,our_ref&week_label=gte.2026-W14&order=id'),
       fetchAll('non_converted_quotes?select=week_label,depot,customer_name,quote_issued_by,income,tariff,quote_no&week_label=gte.2026-W14&order=id'),
       fetchAll('cancelled_quotes?select=week_label,depot,customer_name,value,reason_code,our_ref&week_label=gte.2026-W14&order=id'),
       fetchAll('rep_aliases?select=alias_name,canonical_name'),

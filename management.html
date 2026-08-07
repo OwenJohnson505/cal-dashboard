@@ -255,27 +255,57 @@ function analyse(){
   const canon = n => RAW.cust[n] || n;
   const repOf = n => { const t=String(n||'').trim(); if(!t) return '(unattributed)'; return RAW.rep[t]||t; };
 
-  const weeks=[...new Set(jobs.map(j=>j.week_label))].sort();
-  const cur=weeks[weeks.length-1], prev=weeks[weeks.length-2];
+  /* ============================================================
+     TIMEFRAMES — Owen's rule (2026-08-07). Nothing is contracted,
+     so week-to-week volume flux is normal and comparing one week
+     with the next reads noise as trend. Trends are therefore judged
+     on 4-WEEK BLOCKS (last 4 vs the 4 before). The single week only
+     appears in "what happened this week", and only for moves that
+     are genuinely material.
+     ============================================================ */
+  const weeksAll=[...new Set(jobs.map(j=>j.week_label))].sort();
   const wk = w => jobs.filter(j=>j.week_label===w);
   const sum = rows => rows.reduce((a,r)=>({rev:a.rev+ +(r.revenue||0),
     prof:a.prof+ +(r.profit||0), n:a.n+1}),{rev:0,prof:0,n:0});
 
+  /* a half-loaded latest week would poison every comparison — drop it */
+  const wkCounts=weeksAll.map(w=>wk(w).length);
+  const medCount=[...wkCounts].sort((a,b)=>a-b)[Math.floor(wkCounts.length/2)]||1;
+  let partialWeek=null, weeks=weeksAll;
+  if(weeksAll.length>5 && wkCounts[wkCounts.length-1] < medCount*0.5){
+    partialWeek={w:weeksAll[weeksAll.length-1], n:wkCounts[wkCounts.length-1], typical:medCount};
+    weeks=weeksAll.slice(0,-1);
+  }
+  const win4=weeks.slice(-4), prior4=weeks.slice(-8,-4);
+  const cur=weeks[weeks.length-1], prev=weeks[weeks.length-2];
+
+  /* weekly series feeds the sparklines only — never a verdict */
   const series = weeks.map(w=>{
     const s=sum(wk(w)); const byC={};
     wk(w).forEach(j=>{const c=canon(j.customer_name); byC[c]=(byC[c]||0)+ +(j.revenue||0);});
     const vals=Object.values(byC).sort((a,b)=>b-a); const tot=vals.reduce((a,b)=>a+b,0)||1;
     return {w,...s,margin:s.rev?s.prof/s.rev*100:0,customers:vals.length,
-      top1:vals[0]/tot*100, top1name:Object.keys(byC).sort((a,b)=>byC[b]-byC[a])[0],
+      top1:vals.length?vals[0]/tot*100:0,
+      top1name:Object.keys(byC).sort((a,b)=>byC[b]-byC[a])[0],
       top5:vals.slice(0,5).reduce((a,b)=>a+b,0)/tot*100,
       hhi:vals.reduce((a,v)=>a+Math.pow(v/tot*100,2),0)};
   });
-  const C=series[series.length-1], P=series[series.length-2];
 
-  /* revenue bridge */
-  const cm={},pm={};
-  wk(cur).forEach(j=>{const c=canon(j.customer_name); cm[c]=(cm[c]||0)+ +(j.revenue||0);});
-  wk(prev).forEach(j=>{const c=canon(j.customer_name); pm[c]=(pm[c]||0)+ +(j.revenue||0);});
+  /* everything judged is judged on a 4-week block */
+  const agg = ws => {
+    const rows=ws.flatMap(w=>wk(w)); const s=sum(rows); const byC={};
+    rows.forEach(j=>{const c=canon(j.customer_name); byC[c]=(byC[c]||0)+ +(j.revenue||0);});
+    const vals=Object.values(byC).sort((a,b)=>b-a); const tot=vals.reduce((a,b)=>a+b,0)||1;
+    return {...s, byC, margin:s.rev?s.prof/s.rev*100:0, customers:vals.length,
+      top1:vals.length?vals[0]/tot*100:0,
+      top1name:Object.keys(byC).sort((a,b)=>byC[b]-byC[a])[0],
+      top5:vals.slice(0,5).reduce((a,b)=>a+b,0)/tot*100,
+      hhi:vals.reduce((a,v)=>a+Math.pow(v/tot*100,2),0)};
+  };
+  const C=agg(win4), P=agg(prior4);
+
+  /* revenue bridge — 4-week block vs the block before */
+  const cm=C.byC, pm=P.byC;
   const firstSeen={},lastSeen={};
   jobs.forEach(j=>{const c=canon(j.customer_name);
     if(!firstSeen[c]||j.week_label<firstSeen[c]) firstSeen[c]=j.week_label;
@@ -283,7 +313,7 @@ function analyse(){
   const bridge={neww:0,returned:0,grew:0,shrank:0,lost:0}, movers=[];
   new Set([...Object.keys(cm),...Object.keys(pm)]).forEach(c=>{
     const a=cm[c]||0,b=pm[c]||0,d=a-b;
-    if(b===0&&firstSeen[c]===cur) bridge.neww+=d; else if(b===0) bridge.returned+=d;
+    if(b===0&&win4.includes(firstSeen[c])) bridge.neww+=d; else if(b===0) bridge.returned+=d;
     else if(a===0) bridge.lost+=d; else if(d>0) bridge.grew+=d; else bridge.shrank+=d;
     movers.push({c,cur:a,prev:b,d});
   });
@@ -292,6 +322,41 @@ function analyse(){
   const exC=C.rev-topMover.cur, exP=P.rev-topMover.prev;
   const underlying = exP? (exC-exP)/exP*100 : 0;
   const headline = P.rev? (C.rev-P.rev)/P.rev*100 : 0;
+
+  /* ---- THIS WEEK'S KEY EVENTS ----
+     A customer makes the list only if BOTH are true:
+       - the move is big for THEM: ≥ +20% or ≤ −30% of their typical week
+         (typical = their average over the trailing 12 weeks)
+       - the move is big for US: the £ swing is at least ~1% of a normal
+         week's revenue.
+     A once-a-week customer booking a long job instead of a short one
+     fails the second test and stays out — that is flux, not an event. */
+  const hist=weeks.slice(-13,-1);
+  const histN=hist.length||1;
+  const wkRevAvg=hist.reduce((s,w)=>s+sum(wk(w)).rev,0)/histN;
+  const matAbs=Math.max(wkRevAvg*0.01,500);
+  const custWeekly={};
+  jobs.forEach(j=>{const c=canon(j.customer_name);
+    (custWeekly[c]=custWeekly[c]||{})[j.week_label]=(custWeekly[c][j.week_label]||0)+ +(j.revenue||0);});
+  const events=[]; let restUp=0,restDown=0,restN=0;
+  Object.entries(custWeekly).forEach(([c,byW])=>{
+    const now=byW[cur]||0;
+    const base=hist.reduce((s,w)=>s+(byW[w]||0),0)/histN;
+    const d=now-base;
+    if(Math.abs(d)<matAbs){ if(d>0)restUp+=d; else restDown+=d; restN++; return; }
+    const isUp   = base>0 ? now>=base*1.2 : true;     // no history = new money
+    const isDown = base>0 && now<=base*0.7;
+    if(!isUp && !isDown){ if(d>0)restUp+=d; else restDown+=d; restN++; return; }
+    /* streak: how many consecutive weeks has this been true? */
+    let streak=0;
+    for(let i=weeks.length-1;i>=0;i--){
+      const v=byW[weeks[i]]||0;
+      if(d<0 ? v<=base*0.7 : v>=base*1.2) streak++; else break;
+    }
+    events.push({c, now, base, d, streak,
+      kind: base===0?'first revenue': d<0? (now===0?'nothing this week':'well below typical') : 'well above typical'});
+  });
+  events.sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
 
   /* ---- SALES: margin standardised on the work mix each rep actually does ---- */
   const recent = jobs.filter(j=>j.week_label>=weeks[Math.max(0,weeks.length-12)] && +(j.revenue||0)>0);
@@ -437,8 +502,11 @@ function analyse(){
   const atRisk=Object.keys(rev12).filter(c=>lastSeen[c]<weeks[weeks.length-3])
     .map(c=>({c,rev:rev12[c],last:lastSeen[c]})).sort((a,b)=>b.rev-a.rev).slice(0,8);
 
-  const lossCur=wk(cur).filter(j=>+(j.profit||0)<0), lossPrev=wk(prev).filter(j=>+(j.profit||0)<0);
-  return {weeks,cur,prev,series,C,P,bridge,movers,topMover,headline,underlying,
+  /* loss-making work, also on 4-week blocks */
+  const lossCur=win4.flatMap(w=>wk(w)).filter(j=>+(j.profit||0)<0);
+  const lossPrev=prior4.flatMap(w=>wk(w)).filter(j=>+(j.profit||0)<0);
+  return {weeks,cur,prev,win4,prior4,partialWeek,series,C,P,bridge,movers,topMover,headline,underlying,
+    events,restUp,restDown,restN,matAbs,wkRevAvg,
     reps,desk,bandTable,mix,newC,atRisk,dep,funnel,cancReasons,
     lossCur, lossVal:lossCur.reduce((s,j)=>s+ +(j.profit||0),0),
     lossValP:lossPrev.reduce((s,j)=>s+ +(j.profit||0),0)};
@@ -446,20 +514,20 @@ function analyse(){
 
 function cracks(A){
   const out=[]; const push=(sev,t,d,ev)=>out.push({sev,t,d,ev});
-  if(A.headline>0 && A.underlying<0)
+  if(A.headline>0 && A.underlying<-3)
     push('critical','A good headline is hiding a shrinking base',
-      `Revenue rose ${pc(A.headline)}, but strip out ${esc(A.topMover.c)} and the rest of the book fell ${pc(A.underlying)}.`,
-      `${esc(A.topMover.c)}: ${gbp(A.topMover.prev)} → ${gbp(A.topMover.cur)}. Everything else: ${gbp(exRest(A))}.`);
+      `Over the last 4 weeks revenue rose ${pc(A.headline)} against the 4 before — but strip out ${esc(A.topMover.c)} and the rest of the book fell ${pc(A.underlying)}. On a 4-week block that is a pattern, not weekly flux.`,
+      `${esc(A.topMover.c)}: ${gbp(A.topMover.prev)} → ${gbp(A.topMover.cur)} across the block. Everything else: ${gbp(exRest(A))}.`);
   const hhiCh=A.P.hhi?(A.C.hhi-A.P.hhi)/A.P.hhi*100:0;
   if(hhiCh>15) push(A.C.top1>25?'critical':'serious','Concentration got materially worse',
     `Your largest customer is now ${A.C.top1.toFixed(1)}% of revenue, up from ${A.P.top1.toFixed(1)}%.`,
     `HHI ${Math.round(A.P.hhi)} → ${Math.round(A.C.hhi)} (${pc(hhiCh,0)}). Top 5 now ${A.C.top5.toFixed(1)}%.`);
   if(A.headline>0 && A.C.margin<A.P.margin-0.5)
-    push('serious','Revenue up, margin down','You sold more and kept less of it.',
-      `Margin ${A.P.margin.toFixed(1)}% → ${A.C.margin.toFixed(1)}%.`);
-  if(A.C.customers<A.P.customers && A.headline>0)
+    push('serious','Revenue up, margin down','You sold more and kept less of it, sustained across a 4-week block.',
+      `Margin ${A.P.margin.toFixed(1)}% → ${A.C.margin.toFixed(1)}% (4 weeks vs the 4 before).`);
+  if(A.C.customers<A.P.customers*0.95 && A.headline>0)
     push('warning','Fewer customers, more revenue','The book is getting narrower even as it gets bigger.',
-      `Active customers ${A.P.customers} → ${A.C.customers}.`);
+      `Active customers ${A.P.customers} → ${A.C.customers} (4-week blocks).`);
   const n=A.newC.slice(-4), o=A.newC.slice(-8,-4);
   const nv=n.reduce((s,x)=>s+x.val,0), ov=o.reduce((s,x)=>s+x.val,0);
   if(ov>0 && nv<ov*0.6) push('warning','New customers are getting smaller',
@@ -469,8 +537,8 @@ function cracks(A){
   if(m0&&m1&&m1.share<m0.share-3) push('serious','Contract driver share is falling',
     'Work is drifting to the spot market — capacity you pay to keep and are not using.',
     `${m0.share.toFixed(1)}% → ${m1.share.toFixed(1)}% over ${A.mix.length} weeks.`);
-  if(A.lossVal<A.lossValP) push('warning','Loss-making work increased','',
-    `${A.lossCur.length} jobs totalling ${gbp(A.lossVal)} (last week ${gbp(A.lossValP)}).`);
+  if(A.lossVal<A.lossValP*1.15) push('warning','Loss-making work increased','',
+    `${A.lossCur.length} jobs totalling ${gbp(A.lossVal)} over the last 4 weeks (previous 4: ${gbp(A.lossValP)}).`);
   /* fair-comparison findings only — never raw rank */
   const badRep=A.reps.find(r=>r.gap!=null && r.gap<-6 && r.judged>60000);
   if(badRep) push('serious',`${esc(badRep.name)} is below the rate for the work they do`,
@@ -583,7 +651,9 @@ function pricingCard(){
 function render(){
   A=analyse(); const K=cracks(A);
   const worst=K[0].sev, tone=worst==='critical'?'bad':(worst==='serious'||worst==='warning')?'warn':'';
-  document.getElementById('period').textContent=`Week ${A.cur} vs ${A.prev} · ${A.dep==='all'?'North + South':A.dep}`;
+  document.getElementById('period').textContent=
+    `Last 4 weeks (${A.win4[0]}–${A.win4[A.win4.length-1]}) vs the 4 before · ${A.dep==='all'?'North + South':A.dep}`+
+    (A.partialWeek?` · ${A.partialWeek.w} excluded as partial (${A.partialWeek.n} jobs vs ~${A.partialWeek.typical})`:'');
 
   const mLo=Math.min(...A.reps.flatMap(r=>[r.actual,r.expected??r.actual]))-2;
   const mHi=Math.max(...A.reps.flatMap(r=>[r.actual,r.expected??r.actual]))+2;
@@ -593,8 +663,8 @@ function render(){
   document.getElementById('content').innerHTML=`
   <div class="card verdict ${tone}">
     <div class="hero">
-      <div><div class="lab">Revenue</div><div class="fig">${gbp(A.C.rev)}</div>
-        <div class="delta ${A.headline>=0?'up':'down'}">${pc(A.headline)} vs last week</div></div>
+      <div><div class="lab">Revenue, last 4 weeks</div><div class="fig">${gbp(A.C.rev)}</div>
+        <div class="delta ${A.headline>=0?'up':'down'}">${pc(A.headline)} vs the 4 before</div></div>
       <div><div class="lab">Underlying (ex ${esc(A.topMover.c).slice(0,16)})</div>
         <div class="fig">${pc(A.underlying)}</div><div class="delta muted">the part that repeats</div></div>
       <div><div class="lab">Margin</div><div class="fig">${A.C.margin.toFixed(1)}%</div>
@@ -602,9 +672,35 @@ function render(){
       <div><div class="lab">Top customer</div><div class="fig">${A.C.top1.toFixed(1)}%</div>
         <div class="delta ${A.C.top1<=A.P.top1?'up':'down'}">${pts(A.C.top1-A.P.top1)} pts</div></div>
     </div>
-    <p>${A.headline>0&&A.underlying<0
-      ? `Revenue rose <strong>${pc(A.headline)}</strong> to <strong>${gbp(A.C.rev)}</strong> — but excluding ${esc(A.topMover.c)} the rest of the book <strong class="down">fell ${pc(A.underlying)}</strong>.`
-      : `Revenue ${A.headline>=0?'rose':'fell'} <strong>${pc(A.headline)}</strong> to <strong>${gbp(A.C.rev)}</strong>; excluding ${esc(A.topMover.c)} the rest ${A.underlying>=0?'rose':'fell'} <strong>${pc(A.underlying)}</strong>.`}</p>
+    <p>${A.headline>0&&A.underlying<-3
+      ? `Over four weeks revenue rose <strong>${pc(A.headline)}</strong> to <strong>${gbp(A.C.rev)}</strong> — but excluding ${esc(A.topMover.c)} the rest of the book <strong class="down">fell ${pc(A.underlying)}</strong>.`
+      : `Over four weeks revenue ${A.headline>=0?'rose':'fell'} <strong>${pc(A.headline)}</strong> to <strong>${gbp(A.C.rev)}</strong>; excluding ${esc(A.topMover.c)} the rest ${A.underlying>=0?'rose':'fell'} <strong>${pc(A.underlying)}</strong>.
+        Week-to-week flux is normal for an uncontracted book — nothing here is judged on a single week.`}</p>
+  </div>
+
+  <div class="card">
+    <h2>What actually happened in week ${A.cur}</h2>
+    <p class="sub">Only moves that clear two bars: at least <b>+20% / −30%</b> against that customer's
+      typical week (their 12-week average), <i>and</i> worth at least <b>${gbp(A.matAbs)}</b>
+      (~1% of a normal week's revenue). A regular booking a long job instead of a short one
+      does not qualify — that is flux, not an event.</p>
+    ${A.events.length?`<div class="scroll"><table>
+      <thead><tr><th>Customer</th><th class="num">This week</th><th class="num">Typical week</th>
+      <th class="num">Swing</th><th>What it is</th></tr></thead>
+      <tbody>${A.events.slice(0,8).map(e=>`<tr>
+        <td>${esc(e.c).slice(0,34)}</td>
+        <td class="num">${gbp(e.now)}</td>
+        <td class="num">${e.base?gbp(e.base):'—'}</td>
+        <td class="num ${e.d<0?'down':'up'}">${gbpk(e.d)}</td>
+        <td>${e.kind}${e.streak>1?` — <b>${e.streak} weeks running</b>`:''}</td></tr>`).join('')}</tbody>
+    </table></div>
+    ${A.events.length>8?`<p class="foot">${A.events.length-8} further qualifying moves not shown.</p>`:''}`
+    :`<p class="sub"><b>No customer moved materially this week.</b> Everything stayed within
+      normal range of its own typical week.</p>`}
+    <p class="foot">The ${A.restN.toLocaleString()} customers below the bar net out to
+      ${gbpk(A.restUp)} up / ${gbpk(A.restDown)} down — normal churn of an uncontracted book.
+      "Weeks running" means the move has repeated: two or more weeks the same way is a trend
+      forming, one week is noise.</p>
   </div>
 
   <div class="card">
@@ -617,7 +713,7 @@ function render(){
 
   <div class="grid two">
     <div class="card"><h2>Where the change came from</h2>
-      <p class="sub">${gbp(A.P.rev)} → ${gbp(A.C.rev)}, by what each customer did.</p>
+      <p class="sub">${gbp(A.P.rev)} → ${gbp(A.C.rev)} across 4-week blocks, by what each customer did.</p>
       ${bridgeChart(A)}
       <div class="legend"><span><i style="background:var(--s3)"></i>New</span>
       <span><i style="background:var(--s1)"></i>Returned / grew</span>

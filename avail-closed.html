@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reminders stopped · Cal</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f2f4f7;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1c2431}
+  .card{background:#fff;border:1px solid #e2e6ec;border-radius:14px;box-shadow:0 8px 30px rgba(16,24,40,.06);padding:44px 48px;max-width:430px;text-align:center;margin:20px}
+  .ring{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
+  .ring.ok{background:#e8f4ed}
+  .ring.warn{background:#faf3e2}
+  h1{font-size:21px;margin:0 0 10px}
+  p{margin:0 0 6px;color:#5a6675;font-size:14.5px;line-height:1.55}
+  .foot{margin-top:22px;font-size:12px;color:#9aa4b2}
+  .brand{font-weight:700;color:#f08c1e}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div id="v-ok">
+      <div class="ring ok"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#1f7a4d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <h1>Reminders stopped</h1>
+      <p>This enquiry is marked as handled — no more chase emails will be sent for it.</p>
+      <p>You can close this tab.</p>
+    </div>
+    <div id="v-bad" class="hidden">
+      <div class="ring warn"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#9a6b10" stroke-width="3" stroke-linecap="round"><line x1="12" y1="7" x2="12" y2="14"/><circle cx="12" cy="17.6" r="1.2" fill="#9a6b10" stroke="none"/></svg></div>
+      <h1>Link invalid or already closed</h1>
+      <p>This stop-link doesn't match an open enquiry. It may have been closed already, or the link is from an old email.</p>
+      <p>You can close this tab.</p>
+    </div>
+    <div class="foot"><span class="brand">Cal</span> · availability watcher</div>
+  </div>
+  <script>
+    if(new URLSearchParams(location.search).get("ok")==="0"){
+      document.getElementById("v-ok").classList.add("hidden");
+      document.getElementById("v-bad").classList.remove("hidden");
+    }
+  </script>
+</body>
+</html>
